@@ -1,6 +1,6 @@
 # Options Visualizer
 
-Build options strategies visually and view estimated profit and loss across price, time, and implied volatility.
+Build options strategies visually, view estimated profit and loss across price, time, and implied volatility.
 
 ![Options Visualizer building a bull call spread with an interactive strike selector, payoff graph, and strategy summary](screenshots/options-visualizer-builder.png)
 

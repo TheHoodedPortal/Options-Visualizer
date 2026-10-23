@@ -1,0 +1,17 @@
+{
+  "name": "options-visualizer",
+  "version": "0.1.0",
+  "description": "An open source visual options strategy builder",
+  "type": "module",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node server.mjs",
+    "test": "node --test"
+  },
+  "license": "MIT"
+}
+
+

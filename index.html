@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0e0f0e">
+  <title>Options Visualizer — Strategy builder</title>
+  <script>
+    const design = new URLSearchParams(location.search).get('design');
+    const version = design === 'hierarchy' ? '.hierarchy' : '.previous';
+    document.write(`<link rel="stylesheet" href="./src/styles${version}.css">`);
+    document.write(`<link rel="stylesheet" href="./src/liquid-glass${version}.css">`);
+    if (design !== 'previous') document.write('<link rel="stylesheet" href="./src/popup-glass.css">');
+  </script>
+  <script type="module" src="./src/main.js"></script>
+  <script type="module" src="./src/liquid-glass.js"></script>
+</head>
+<body class="compact-builder readable-builder liquid-builder">
+  <div class="app-shell">
+    <main class="builder" id="builder-main">
+      <div class="page-heading">
+        <div class="security-block">
+          <div class="strategy-title-row">
+            <h1 id="strategy-title" class="sr-only">Long Call </h1>
+            <select id="strategy-select" aria-label="Strategy preset">
+              <option value="long-call">Long Call</option><option value="long-put">Long Put</option>
+              <option value="bull-call-spread">Bull Call Spread</option><option value="bear-put-spread">Bear Put Spread</option>
+              <option value="straddle">Long Straddle</option><option value="short-straddle">Short Straddle</option><option value="short-strangle">Short Strangle</option>
+              <option value="iron-condor">Iron Condor</option><option value="long-guts">Long Guts</option><option value="long-strangle">Long Strangle</option><option value="custom">Custom Strategy</option>
+            </select>
+            <svg id="strategy-payoff-preview" class="strategy-payoff-preview" viewBox="0 0 64 32" role="img" aria-label="Long Call expiration payoff preview"></svg>
+            <button id="strategy-help" class="help-icon" type="button" aria-label="About this strategy" title="About this strategy">?</button>
+          </div>
+          <div class="quote-row">
+            <div class="symbol-combobox"><input id="symbol-input" class="symbol-field" type="text" role="combobox" aria-label="Ticker symbol" aria-autocomplete="list" aria-expanded="false" aria-controls="ticker-suggestions" autocomplete="off" spellcheck="false" maxlength="12" value="MU"><div id="ticker-suggestions" class="symbol-suggestions" role="listbox" aria-label="Popular ticker suggestions" hidden></div></div>
+            <div class="price-stack"><label class="spot-field">$<input id="spot-input" type="text" inputmode="decimal" aria-label="Editable underlying price" title="Edit the underlying price" value="1,047.60" autocomplete="off" spellcheck="false"></label><span class="quote-change">−3.71%<small>−$40.40</small></span></div>
+            <button id="data-button" class="demo-pill" type="button" title="Yahoo Finance data status">◌ Connecting Yahoo…</button>
+          </div>
+          <p id="data-status-detail" class="data-status-detail">Sample values shown while Yahoo Finance connects.</p>
+        </div>
+        <div class="toolbar" aria-label="Trade actions">
+          <button id="history-button" class="toolbar-button" type="button">Saved strategies</button>
+        </div>
+      </div>
+
+      <div class="workspace-grid">
+        <div class="analysis-column">
+          <div class="contract-controls">
+          <section class="expiration-section control-card" id="trade-controls" aria-label="Option expiration">
+            <div class="section-title expiration-heading"><h2>Expiration</h2><div class="expiration-heading-actions"><span id="expiration-dte">36d</span><div class="expiration-navigation"><button id="expiry-prev" type="button" aria-label="Earlier expirations" title="Earlier expirations">‹</button><button id="expiry-next" type="button" aria-label="Later expirations" title="Later expirations">›</button></div></div></div>
+            <div id="expiration-strip" class="expiration-strip"></div>
+          </section>
+
+          <section class="strike-section control-card" aria-label="Option strikes">
+            <div class="section-title"><h2>Strike</h2><div class="strike-title-tools"><div class="volume-legend" aria-label="Option volume legend"><span class="volume-legend-label">Volume</span><span><i class="call-volume-swatch"></i>Calls</span><span><i class="put-volume-swatch"></i>Puts</span></div><span id="strike-help">Click to add or edit · hold to move</span></div></div>
+            <div id="strike-ruler" class="strike-ruler" tabindex="0" role="group" aria-label="Strike ruler" aria-describedby="strike-help volume-bars"><div id="volume-bars" class="volume-bars" aria-label="Call volume bars extend above the baseline; put volume bars extend below it. Bar heights use a relative logarithmic scale."></div><div id="ruler-ticks" class="ruler-ticks"></div><div id="strike-markers" class="strike-markers"></div></div>
+          </section>
+
+          </div>
+
+          <section class="analysis-card" aria-label="Profit and loss analysis">
+            <div class="analysis-heading">
+              <h2 id="analysis-title">Profit &amp; loss</h2>
+              <div class="analysis-model-controls" aria-label="Pricing assumptions">
+                <div class="assumptions-caption"><span>Pricing assumptions</span><button id="assumptions-help" class="text-button" type="button" aria-label="Explain pricing assumptions and the fixed 4% interest rate">4% rate <span aria-hidden="true">ⓘ</span></button></div>
+                <label class="model-select-field" for="model-select"><span>Model</span><select id="model-select" title="Choose how option values are estimated"><option value="bjerksund-stensland">Bjerksund–Stensland 2002</option><option value="black-scholes">Black–Scholes</option></select></label>
+                <div class="yield-field"><span class="yield-field-title"><label for="dividend-yield">Dividend yield</label><span class="yield-source-actions"><small id="dividend-yield-source">NO DATA</small><button id="yield-auto" class="yield-reset" type="button" hidden title="Use Yahoo Finance's trailing estimate">Auto</button></span></span><span class="yield-input-wrap"><input id="dividend-yield" type="number" min="0" max="25" step="0.01" value="0.00" inputmode="decimal" aria-label="Annual dividend-yield assumption; Yahoo Finance's trailing estimate can be overridden" title="Yahoo Finance's trailing annual dividend-yield estimate. Edit to override."><span>%</span></span></div>
+              </div>
+            </div>
+            <div class="visualization">
+              <div id="graph-view" class="graph-view graph-glass-active">
+                <div class="graph-legend"><span id="legend-now-item"><i class="legend-now"></i><span id="legend-now">Today</span></span><span id="legend-exp-item"><i class="legend-exp"></i><span id="legend-exp">Expiration</span></span></div>
+                <svg id="payoff-chart" viewBox="0 0 1160 390" preserveAspectRatio="none" role="img" aria-label="Profit and loss chart"></svg>
+                <div id="graph-tooltip" class="graph-tooltip" hidden></div>
+              </div>
+            </div>
+            <div class="controls">
+              <div class="date-control"><div class="control-label"><strong>Scenario date <span id="date-label">Now</span></strong><div class="scenario-actions"><span id="remaining-label">36d to expiration</span><button id="reset-scenario" class="text-button" type="button" title="Reset scenario date to today, chart range to ±15%, and volatility to its base estimate" disabled>Reset</button></div></div><input id="date-slider" type="range" min="0" max="36" value="0" aria-label="Days forward"></div>
+              <div class="lower-controls">
+                <div class="slider-control"><label for="range-slider">Chart range <strong id="range-label">±15%</strong></label><input id="range-slider" type="range" min="5" max="50" value="15"></div>
+                <div class="slider-control"><label for="iv-slider">Implied volatility <strong id="iv-label">46.5%</strong></label><input id="iv-slider" type="range" min="40" max="200" value="100"><div class="iv-scale"><span>½×</span><span>1×</span><span>2×</span></div></div>
+              </div>
+            </div>
+            <div class="bottom-toolbar">
+              <div class="segmented output-tabs" aria-label="Chart output">
+                <button data-output="pl" class="selected" type="button">Profit / loss $</button>
+                <button data-output="percent" type="button">Profit / loss %</button>
+                <button data-output="value" type="button">Contract value</button>
+                <button data-output="risk" type="button">% of max risk</button>
+              </div>
+            </div>
+          </section>
+          <p class="data-note">Illustrative option prices and modeled outcomes. Edit the underlying price and each leg premium to explore a trade.</p>
+        </div>
+        <aside class="strategy-panel" aria-labelledby="ticket-title">
+          <div class="strategy-panel-card">
+            <div class="ticket-body">
+              <div class="strategy-panel-head"><h2 id="ticket-title">Your strategy</h2><span id="ticket-expiry" class="ticket-expiry"></span></div>
+              <div class="position-overview">
+                <div class="position-overview-head"><span>Contracts</span><span id="ticket-leg-count"></span></div>
+                <div id="strategy-legs-summary" class="strategy-legs-summary"></div>
+                <button id="add-leg" class="panel-secondary ticket-add" type="button"><span aria-hidden="true">＋</span> Add option</button>
+              </div>
+              <details class="greeks-panel">
+                <summary>
+                  <span class="greeks-summary-title"><strong>Position Greeks</strong><small>Estimated sensitivity</small></span>
+                  <span class="greeks-summary-meta"><span id="greeks-asof" class="greeks-asof">Now</span><span class="greeks-chevron" aria-hidden="true"></span></span>
+                </summary>
+                <div class="greeks-content">
+                  <div class="greeks-grid">
+                    <div><span class="greek-name"><span aria-hidden="true">Δ</span> Delta</span><strong><span id="greek-delta">+0.0</span><small>shares</small></strong></div>
+                    <div><span class="greek-name"><span aria-hidden="true">Γ</span> Gamma</span><strong><span id="greek-gamma">+0.000</span><small>shares / $1</small></strong></div>
+                    <div><span class="greek-name"><span aria-hidden="true">Θ</span> Theta</span><strong><span id="greek-theta">−$0.00</span><small>/ day</small></strong></div>
+                    <div><span class="greek-name"><span aria-hidden="true">V</span> Vega</span><strong><span id="greek-vega">+$0.00</span><small>/ 1% IV</small></strong></div>
+                  </div>
+                  <p id="greeks-note" class="greeks-note">Model estimates use the selected pricing model and scenario assumptions.</p>
+                </div>
+              </details>
+          <section class="stat-section" aria-label="Trade statistics at expiration">
+            <div class="stats">
+              <div class="stat"><span id="net-label">Net debit</span><strong id="net-value">$6,200</strong></div>
+              <div class="stat"><span>Max loss</span><strong id="max-loss">↘ $6,200</strong></div>
+              <div class="stat"><span>Max profit</span><strong id="max-profit" class="positive">↗ Infinite</strong></div>
+              <div class="stat"><span>Chance of profit</span><strong id="chance-profit">—</strong></div>
+              <div class="stat"><span>Breakeven</span><strong id="breakeven">Above $1,112</strong></div>
+            </div>
+          </section>
+              <div class="side-actions">
+                <button id="positions-button" class="panel-secondary" type="button">Manage positions <span id="positions-count">(1)</span></button>
+                <button id="save-button" class="panel-primary" type="button">Save strategy</button>
+              </div>
+              <p class="panel-disclaimer">Strategies save in this browser</p>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </main>
+  </div>
+  <div id="contract-menu" class="contract-menu" role="menu" aria-label="Add option contract" hidden></div>
+  <div id="contract-editor" class="contract-editor" role="dialog" aria-label="Edit option contract" hidden></div>
+  <div id="modal-backdrop" class="modal-backdrop" hidden><section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><div class="modal-header"><h2 id="modal-title"></h2><button id="close-modal" class="icon-button" aria-label="Close">×</button></div><div id="modal-content"></div></section></div>
+  <div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>

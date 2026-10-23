@@ -1,0 +1,298 @@
+/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4
+ * Main builder material layer; glass is the default presentation.
+ * Optical references and browser limitations: docs/liquid-glass-references.md.
+ */
+html { scrollbar-gutter: stable; }
+.liquid-builder {
+  --lg-canvas: #0d0e10;
+  --lg-content: #131416;
+  --lg-ink: #f3f4f5;
+  --lg-muted: #b4b7bd;
+  --lg-rule: rgba(255, 255, 255, .1);
+  --lg-dark: rgba(20, 22, 26, .32);
+  --lg-sheen-top: rgba(235, 242, 255, .065);
+  --lg-sheen-middle: rgba(235, 242, 255, .012);
+  --lg-sheen-bottom: rgba(235, 242, 255, .025);
+  --lg-button-top: rgba(245, 248, 255, .095);
+  --lg-button-bottom: rgba(245, 248, 255, .018);
+  --lg-pointer-light: rgba(245, 249, 255, .18);
+  --lg-pointer-clear: rgba(245, 249, 255, 0);
+  --lg-reflection: rgb(224, 231, 241);
+  --lg-wash: rgba(255, 255, 255, .025);
+  --lg-white: rgba(255, 255, 255, 1);
+  --lg-clear: rgba(255, 255, 255, 0);
+  --lg-soft: rgba(255, 255, 255, .055);
+  --lg-rim: rgba(255, 255, 255, .1);
+  --lg-rim-low: rgba(255, 255, 255, .018);
+  --lg-rim-mid: rgba(255, 255, 255, .09);
+  --lg-shadow: rgba(0, 0, 0, .34);
+  --lg-shadow-deep: rgba(0, 0, 0, .6);
+  --lg-field: rgba(0, 0, 0, .25);
+  --lg-focus: #d4def2;
+  --lg-selection: rgba(255, 255, 255, .1);
+  --lg-selection-edge: rgba(255, 255, 255, .19);
+  --lg-popover: rgba(30, 32, 37, .94);
+  --lg-tooltip: rgba(20, 22, 26, .58);
+  --lg-tab-face: rgba(235, 242, 255, .035);
+  --lg-tab-top: rgba(245, 248, 255, .16);
+  --lg-tab-bottom: rgba(245, 248, 255, .035);
+  --lg-tab-edge: rgba(245, 248, 255, .25);
+  --lg-graph-sheen: rgba(235, 242, 255, .045);
+  --lg-graph-dark: rgba(4, 6, 10, .12);
+  --lg-contract-call: var(--color-green);
+  --lg-contract-put: var(--color-red);
+  --lg-contract-highlight: rgba(245, 249, 255, .24);
+  --lg-radius-panel: 20px;
+  --lg-radius-control: 12px;
+  --lg-radius-field: 10px;
+  --lg-status-surface: rgba(210, 181, 109, .065);
+  --lg-status-edge: rgba(210, 181, 109, .25);
+  --color-menu-surface: var(--lg-popover);
+  --color-menu-border: var(--lg-rule);
+  --color-menu-hover: var(--lg-soft);
+  --color-bg: var(--lg-canvas);
+  --color-text: var(--lg-ink);
+  --color-muted: var(--lg-muted);
+  background: var(--lg-canvas);
+  color: var(--lg-ink);
+}
+.liquid-builder .site-header {
+  position: sticky;
+  top: 0;
+  z-index: 15;
+  background: var(--lg-dark);
+  border-bottom: 1px solid var(--lg-rule);
+  backdrop-filter: blur(24px) saturate(100%);
+  -webkit-backdrop-filter: blur(24px) saturate(100%);
+}
+.liquid-builder .header-context { color: var(--lg-muted); }
+.liquid-builder .strategy-payoff-preview { display: block; flex: 0 0 64px; width: 64px; height: 32px; overflow: visible; }
+.strategy-payoff-preview .preview-zero { stroke: var(--lg-rule); stroke-width: 1; }
+.strategy-payoff-preview .preview-line { fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.strategy-payoff-preview .preview-profit { stroke: var(--color-green); }
+.strategy-payoff-preview .preview-loss { stroke: var(--color-red); }
+.liquid-builder .header-right { gap: 10px; }
+.liquid-builder :is(.contract-controls, .analysis-card, .strategy-panel-card, .modal) { border-radius: var(--lg-radius-panel); }
+.liquid-builder .analysis-card .controls { border-radius: var(--lg-radius-control); }
+.liquid-builder .demo-pill.sample { color: var(--color-amber); border-color: var(--lg-status-edge); background: var(--lg-status-surface); }
+.liquid-builder .demo-pill.connected { color: var(--lg-muted); border-color: var(--lg-rule); }
+.liquid-builder .analysis-card {
+  background: var(--lg-content);
+  border-color: var(--lg-rule);
+  box-shadow: 0 12px 32px var(--lg-shadow);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.liquid-builder .ticket-body { backdrop-filter: none; -webkit-backdrop-filter: none; }
+.liquid-builder .strategy-panel-card { overflow: visible; top: auto; }
+.liquid-builder .strategy-legs-summary, .liquid-builder .stats { background: none; }
+.liquid-builder .strategy-leg-row:hover { background: var(--lg-wash); }
+.liquid-builder .model-select-field select, .liquid-builder .yield-input-wrap,
+.liquid-builder .modal .form-field :is(input, select) { background: var(--lg-field); border-color: var(--lg-rule); border-radius: var(--lg-radius-field); box-shadow: inset 0 1px 0 var(--lg-wash); }
+.liquid-builder .modal .position-card { border-color: var(--lg-rule); border-radius: var(--lg-radius-control); }
+.liquid-builder :is(.contract-menu, .contract-editor, .symbol-suggestions) { border-color: var(--lg-rule); border-radius: var(--lg-radius-control); background: var(--lg-popover); backdrop-filter: blur(20px) saturate(1.2); -webkit-backdrop-filter: blur(20px) saturate(1.2); box-shadow: 0 10px 28px var(--lg-shadow), inset 0 1px 0 var(--lg-wash); }
+.liquid-builder .modal .position-actions .position-remove:hover:not(:disabled) { text-decoration: underline; text-underline-offset: 3px; }
+.liquid-builder .modal .position-actions .text-button:hover { color: var(--lg-ink); }
+.liquid-builder :is(button, input, select, a, summary):focus-visible { outline: 2px solid var(--lg-focus); outline-offset: 3px; }
+.liquid-builder .help-icon { position: relative; }
+.liquid-builder .help-icon::before { content: ''; position: absolute; inset: -10px; }
+.liquid-builder .liquid-surface {
+  --light-angle: -28deg;
+  --glass-shade: var(--lg-dark);
+  position: relative;
+  z-index: 0;
+  background: none;
+  border: 1px solid var(--lg-rule);
+  box-shadow: 0 10px 24px var(--lg-shadow), inset 0 1px 0 var(--lg-wash);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.liquid-optics, .liquid-optics > span { position: absolute; inset: 0; border-radius: inherit; pointer-events: none; }
+.liquid-optics { z-index: 0; overflow: hidden; }
+.liquid-foreground { z-index: 1; }
+.liquid-static { position: relative; }
+.liquid-frost { background: linear-gradient(165deg, var(--lg-sheen-top), var(--lg-sheen-middle) 32%, var(--lg-clear) 60%, var(--lg-sheen-bottom)), var(--glass-shade); }
+.liquid-light > canvas { display: block; width: 100%; height: 100%; }
+.liquid-edge {
+  padding: 1px;
+  background: conic-gradient(from var(--light-angle), var(--lg-rim), var(--lg-rim-low) 7%, var(--lg-clear) 22%, var(--lg-rim-mid) 49%, var(--lg-rim-low) 57%, var(--lg-clear) 73%, var(--lg-rim-low) 93%, var(--lg-rim));
+  -webkit-mask: linear-gradient(var(--lg-white) 0 0) content-box, linear-gradient(var(--lg-white) 0 0);
+  mask: linear-gradient(var(--lg-white) 0 0) content-box, linear-gradient(var(--lg-white) 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+.liquid-builder .toolbar-button.liquid-surface { --glass-shade: var(--lg-wash); box-shadow: 0 3px 10px var(--lg-shadow); }
+.liquid-pointer { background: radial-gradient(ellipse 65px 38px at var(--pointer-x, 50%) var(--pointer-y, 25%), var(--lg-pointer-light), var(--lg-pointer-clear)); opacity: var(--pointer-energy, 0); transition: opacity 180ms linear; }
+.liquid-builder .toolbar-button:active { transform: scale(.98); }
+.liquid-builder .strike-marker {
+  --contract-accent: var(--lg-contract-call);
+  --contract-face: color-mix(in srgb, var(--contract-accent) 30%, var(--lg-content));
+  --contract-edge: color-mix(in srgb, var(--contract-accent) 72%, var(--lg-ink));
+  --contract-glow: color-mix(in srgb, var(--contract-accent) 28%, transparent);
+  padding: 3px 6px;
+  border: 1px solid var(--contract-edge);
+  border-radius: 7px;
+  background: linear-gradient(160deg, var(--lg-tab-top), var(--lg-clear) 65%), var(--contract-face);
+  color: var(--lg-ink);
+  box-shadow: inset 0 1px 0 var(--lg-contract-highlight), inset 0 -1px 0 var(--lg-field), 0 2px 5px var(--lg-shadow), 0 0 12px var(--contract-glow);
+}
+.liquid-builder .strike-marker.put { --contract-accent: var(--lg-contract-put); }
+.liquid-builder .strike-marker::after { border-top-color: var(--contract-edge); filter: drop-shadow(0 2px 3px var(--contract-glow)); }
+.liquid-builder .strike-marker.short::after, .liquid-builder .strike-marker.short.put::after { border-top: 0; border-bottom-color: var(--contract-edge); filter: drop-shadow(0 -2px 3px var(--contract-glow)); }
+.liquid-builder .strike-marker:focus-visible { outline: 2px solid var(--lg-focus); outline-offset: 3px; }
+.liquid-builder .strike-marker.dragging { box-shadow: inset 0 1px 0 var(--lg-contract-highlight), 0 0 0 2px var(--lg-focus), 0 0 15px var(--contract-glow); }
+@media (hover: hover) { .liquid-builder .strike-marker:hover { background: linear-gradient(160deg, var(--lg-contract-highlight), var(--lg-clear) 65%), var(--contract-face); } }
+.liquid-builder .output-tabs {
+  position: relative;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.liquid-builder .output-tabs button { position: relative; z-index: 1; background: none; box-shadow: none; }
+.liquid-builder .output-tabs button.selected { background: none; box-shadow: none; }
+.liquid-builder .output-tabs button.liquid-surface {
+  z-index: 1;
+  --glass-shade: var(--lg-tab-face);
+  height: 38px;
+  border: 1px solid var(--lg-rule);
+  border-radius: var(--lg-radius-control);
+  color: var(--lg-muted);
+  box-shadow: inset 0 1px 0 var(--lg-soft), 0 2px 5px var(--lg-field);
+  transition: color 150ms linear;
+}
+.liquid-builder .output-tabs button.liquid-surface.selected { --glass-shade: var(--lg-selection); color: var(--lg-ink); border-color: var(--lg-tab-edge); box-shadow: inset 0 1px 0 var(--lg-tab-edge), 0 2px 5px var(--lg-field); }
+.liquid-builder .output-tabs button.liquid-surface .liquid-frost { background: linear-gradient(170deg, var(--lg-button-top), var(--lg-clear) 58%), var(--glass-shade); }
+.liquid-builder .output-tabs button:active .liquid-frost { background: var(--lg-soft); }
+.liquid-builder .output-tabs button:disabled { opacity: .4; cursor: default; }
+.liquid-builder .output-tabs button:focus-visible { outline: 2px solid var(--lg-focus); outline-offset: 2px; }
+@media (hover: hover) { .liquid-builder .output-tabs button:hover { color: var(--lg-ink); } }
+.liquid-filter-defs { position: absolute; width: 0; height: 0; overflow: hidden; pointer-events: none; }
+.liquid-builder .modal.liquid-surface { --glass-shade: var(--lg-popover); }
+.liquid-builder .graph-tooltip { background: linear-gradient(155deg, var(--lg-button-top), var(--lg-clear) 65%), var(--lg-tooltip); border-color: var(--lg-selection-edge); backdrop-filter: blur(14px); box-shadow: 0 10px 28px var(--lg-shadow-deep), inset 0 1px 0 var(--lg-rim), inset 0 -1px 0 var(--lg-soft); }
+.liquid-tooltip-scene { position: absolute; z-index: 4; display: block; overflow: hidden; border-radius: 13px; pointer-events: none; background: var(--lg-content); }
+.liquid-tooltip-scene[hidden] { display: none; }
+.liquid-tooltip-scene > svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.liquid-builder .graph-tooltip { z-index: 5; }
+.liquid-builder .graph-view.liquid-surface { border: 0; border-radius: 15px; box-shadow: none; }
+.graph-view > .liquid-optics { opacity: 0; }
+.graph-view > .liquid-optics .liquid-edge,
+.graph-view > .liquid-optics .liquid-light { display: none; }
+.graph-view.graph-glass-active > .liquid-optics { opacity: 1; }
+.graph-view.graph-glass-active { box-shadow: none !important; }
+.graph-view.graph-glass-active .liquid-frost { background: linear-gradient(160deg, var(--lg-graph-sheen), var(--lg-clear) 45%, var(--lg-graph-dark)); }
+.graph-view > #payoff-chart { position: relative; z-index: 2; }
+.graph-view > .graph-legend { z-index: 3; }
+.graph-view > svg.graph-glow-layer { position: absolute; inset: 0; z-index: 1; pointer-events: none; opacity: 0; overflow: hidden; border-radius: inherit; }
+.graph-view.graph-glass-active > svg.graph-glow-layer { opacity: 1; }
+.liquid-builder [data-glass-failed] { backdrop-filter: blur(12px) !important; }
+@media (max-width: 760px) {
+  .liquid-builder .header-context { display: none; }
+  .liquid-builder .header-right { gap: 7px; }
+}
+@media (pointer: coarse) {
+  .liquid-builder .expiration-navigation button { min-width: 44px; min-height: 44px; }
+  .liquid-builder .output-tabs button.liquid-surface { min-height: 44px; }
+  .liquid-builder .model-select-field select, .liquid-builder .yield-input-wrap { min-height: 44px; }
+  .liquid-builder .contract-menu-item { min-height: 44px; }
+}
+@media (max-width: 560px) {
+  .liquid-builder .strategy-payoff-preview { flex-basis: 52px; width: 52px; height: 28px; }
+  .liquid-builder .output-tabs button.liquid-surface { height: 44px; }
+  .liquid-builder .text-button { min-height: 36px; }
+  .liquid-builder .contract-menu-item { min-height: 44px; }
+}
+@media (max-width: 420px) {
+  .liquid-builder .output-tabs { gap: 8px; border-radius: 0; }
+  .liquid-builder .output-tabs button.liquid-surface { border-radius: 12px; }
+  .liquid-builder .site-header { padding: 0 16px; }
+  .liquid-builder .brand { font-size: 16px; gap: 5px; }
+  .liquid-builder .brand-mark { font-size: 22px; }
+}
+@media (max-width: 360px) {
+  .liquid-builder .analysis-model-controls { display: grid; grid-template-columns: minmax(0, 1fr); width: 100%; gap: 10px; }
+  .liquid-builder .model-select-field select { width: 100%; max-width: none; }
+  .liquid-builder .yield-field { width: 138px; }
+  .liquid-builder .lower-controls { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .liquid-pointer { transition: none; }
+  .liquid-builder .toolbar-button:active { transform: none; }
+}
+@media (forced-colors: active) {
+  .liquid-optics, .graph-glow-layer { display: none; }
+  .liquid-builder .liquid-surface { background: Canvas; border: 1px solid ButtonText; }
+}
+
+/* Position Greeks: a clear accordion header with a compact sensitivity grid. */
+.liquid-builder .greeks-panel {
+  margin: 15px 0 0;
+  padding: 9px 0 0;
+  border-top: 1px solid var(--lg-rule);
+}
+.liquid-builder .greeks-panel summary {
+  box-sizing: border-box;
+  min-height: 48px;
+  margin: 0 -7px;
+  padding: 6px 7px;
+  border-radius: 11px;
+  transition: background-color 150ms ease;
+}
+.liquid-builder .greeks-panel summary::after { content: none; }
+.liquid-builder .greeks-summary-title { display: grid; gap: 3px; }
+.liquid-builder .greeks-summary-title strong { color: var(--lg-ink); font-size: 12px; font-weight: 600; }
+.liquid-builder .greeks-summary-title small { color: var(--lg-muted); font-size: 10px; font-weight: 400; }
+.liquid-builder .greeks-summary-meta { display: inline-flex; align-items: center; gap: 9px; margin-left: auto; }
+.liquid-builder .greeks-asof {
+  padding: 4px 8px;
+  border: 1px solid var(--lg-rule);
+  border-radius: 999px;
+  background: var(--lg-wash);
+  color: var(--lg-muted);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.liquid-builder .greeks-chevron {
+  width: 7px;
+  height: 7px;
+  margin: -3px 2px 0 0;
+  border-right: 1.5px solid var(--lg-muted);
+  border-bottom: 1.5px solid var(--lg-muted);
+  transform: rotate(45deg);
+  transition: transform 160ms ease, margin 160ms ease;
+}
+.liquid-builder .greeks-panel[open] .greeks-chevron { margin-top: 4px; transform: rotate(225deg); }
+.liquid-builder .greeks-content { padding: 8px 2px 0; }
+.liquid-builder .greeks-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+  padding-top: 0;
+}
+.liquid-builder .greeks-grid > div { min-width: 0; gap: 6px; padding: 10px 0; }
+.liquid-builder .greeks-grid > div:nth-child(odd) { padding-right: 13px; }
+.liquid-builder .greeks-grid > div:nth-child(even) { padding-left: 13px; border-left: 1px solid var(--lg-rule); }
+.liquid-builder .greeks-grid > div:nth-child(n + 3) { border-top: 1px solid var(--lg-rule); }
+.liquid-builder .greeks-grid .greek-name { display: flex; align-items: baseline; gap: 6px; color: var(--lg-muted); font-size: 10px; }
+.liquid-builder .greek-name > span { min-width: 11px; color: #c5cad3; font-size: 11px; font-weight: 600; }
+.liquid-builder .greeks-grid strong { gap: 5px; font-size: 14px; font-weight: 600; line-height: 1.25; }
+.liquid-builder .greeks-grid small { color: var(--lg-muted); font-size: 9px; line-height: 1.3; }
+.liquid-builder .greeks-note { margin: 5px 0 0; padding-top: 9px; border-top: 1px solid var(--lg-rule); color: var(--lg-muted); font-size: 9px; line-height: 1.45; }
+@media (hover: hover) {
+  .liquid-builder .greeks-panel summary:hover { background: var(--lg-wash); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .liquid-builder .greeks-panel summary, .liquid-builder .greeks-chevron { transition: none; }
+}
+.liquid-builder .strike-marker {
+  min-width: 48px;
+  padding: 4px 9px;
+  border-radius: 7px;
+  font-size: 12px;
+  line-height: 15px;
+}
+.liquid-builder .strike-marker::after { left: calc(50% - 5px); border-left-width: 5px; border-right-width: 5px; border-top-width: 7px; }
+.liquid-builder .strike-marker.short::after { border-top: 0; border-bottom-width: 7px; }

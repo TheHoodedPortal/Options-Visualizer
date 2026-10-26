@@ -67,3 +67,28 @@ test('does not automatically retry rate-limit responses', async () => {
   await assert.rejects(client.loadSymbol('SPY'), /paused for 60 seconds/i);
   assert.equal(calls, 1);
 });
+
+test('explicit expiration never overwrites the nearest expiration cache', async () => {
+  let calls = 0;
+  const client = new YFinanceClient(async url => {
+    calls++;
+    const expiration = new URL(url).searchParams.get('expiration') || '2026-11-13';
+    return { ok: true, json: async () => ({ quote: {}, expirations: ['2026-11-13', '2026-12-18'], selectedExpiration: expiration, chain: [{ strike: expiration }] }) };
+  });
+  await client.request('MU');
+  await client.request('MU', '2026-12-18');
+  assert.equal((await client.request('MU')).selectedExpiration, '2026-11-13');
+  assert.equal(calls, 2);
+});
+
+test('does not treat a fallback chain as the requested expiration', async () => {
+  let calls = 0;
+  const client = new YFinanceClient(async () => {
+    calls++;
+    return { ok: true, json: async () => ({ quote: {}, expirations: ['2026-11-13'], selectedExpiration: '2026-11-13', chain: [{ strike: 100 }] }) };
+  });
+  await assert.rejects(client.chain('MU', '2026-12-18'), /no longer available/);
+  await assert.rejects(client.chain('MU', '2026-12-18'), /no longer available/);
+  assert.equal(calls, 2);
+  assert.equal((await client.request('MU', '2026-11-13')).selectedExpiration, '2026-11-13');
+});

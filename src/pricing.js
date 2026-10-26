@@ -196,8 +196,8 @@ export function optionGreeks(type, spot, strike, days, volatility, rate = RATE, 
   const delta = type === 'call' ? Math.exp((carry - rate) * years) * normalCdf(d1) : Math.exp((carry - rate) * years) * (normalCdf(d1) - 1);
   const gamma = Math.exp((carry - rate) * years) * density / (spot * sigmaTime);
   const thetaAnnual = -(discountedSpot * density * volatility) / (2 * rootTime) + (type === 'call'
-    ? -dividendYield * discountedSpot * normalCdf(d1) - rate * discountedStrike * normalCdf(d2)
-    : dividendYield * discountedSpot * normalCdf(-d1) + rate * discountedStrike * normalCdf(-d2));
+    ? dividendYield * discountedSpot * normalCdf(d1) - rate * discountedStrike * normalCdf(d2)
+    : -dividendYield * discountedSpot * normalCdf(-d1) + rate * discountedStrike * normalCdf(-d2));
   const vega = discountedSpot * density * rootTime;
   return { delta, gamma, theta: thetaAnnual / 365, vega: vega / 100 };
 }
@@ -293,8 +293,8 @@ export function expirationStats(state) {
 export function outputValue(state, stockPrice, daysForward, output, ivMultiplier = 1) {
   const pnl = profitLoss(state, stockPrice, daysForward, ivMultiplier);
   if (output === 'value') return contractValue(state, stockPrice, daysForward, ivMultiplier);
-  const capital = Math.abs(netDebit(state)) || 1;
-  if (output === 'percent') return pnl / capital * 100;
+  const capital = Math.abs(netDebit(state));
+  if (output === 'percent') return capital > 1e-9 ? pnl / capital * 100 : NaN;
   if (output === 'risk') {
     const risk = expirationStats(state).maxLoss;
     return Number.isFinite(risk) && risk > 0 ? pnl / risk * 100 : NaN;

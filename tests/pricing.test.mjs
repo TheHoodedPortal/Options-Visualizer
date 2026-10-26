@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { bivariateNormalCdf, daysUntil, expirationStats, intrinsic, netDebit, optionDelta, optionGreeks, optionPrice, profitLoss, PRICING_MODELS, strategyGreeks } from '../src/pricing.js';
 
-const expiry = '2026-11-13';
+const expiry = new Date(new Date().getFullYear() + 1, 10, 13).toLocaleDateString('en-CA');
 const call = { symbol: 'MU', spot: 1047.6, iv: .465, expiry, legs: [{ type: 'call', side: 1, strike: 1050, qty: 1, premium: 62 }] };
 const atExpiry = daysUntil(expiry);
 
@@ -116,3 +116,20 @@ test('at expiration only intrinsic delta remains defined', () => {
   assert.deepEqual(optionGreeks('put', 100, 100, 0, .3), { delta: -.5, gamma: 0, theta: 0, vega: 0 });
 });
 
+
+test('European dividend theta matches a finite difference in time', async () => {
+  const { optionGreeks, optionPrice, PRICING_MODELS } = await import('../src/pricing.js');
+  for (const type of ['call', 'put']) {
+    const args = [type, 100, 100, 90, .3, .04, PRICING_MODELS.EUROPEAN, .08];
+    const theta = optionGreeks(...args).theta;
+    const forward = optionPrice(type, 100, 100, 90.01, .3, .04, PRICING_MODELS.EUROPEAN, .08);
+    const backward = optionPrice(type, 100, 100, 89.99, .3, .04, PRICING_MODELS.EUROPEAN, .08);
+    assert.ok(Math.abs(theta + (forward - backward) / .02) < .0001);
+  }
+});
+
+test('zero net premium has no defined percentage return', async () => {
+  const { outputValue } = await import('../src/pricing.js');
+  const state = { spot: 100, iv: .3, expiry: '2099-01-01', legs: [{type:'call', side:1, qty:1, strike:100, premium:0}] };
+  assert.ok(Number.isNaN(outputValue(state, 110, 0, 'percent')));
+});

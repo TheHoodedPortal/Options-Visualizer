@@ -9,7 +9,7 @@
     const design = new URLSearchParams(location.search).get('design');
     const version = design === 'hierarchy' ? '.hierarchy' : '.previous';
     document.write(`<link rel="stylesheet" href="./src/styles${version}.css">`);
-    document.write(`<link rel="stylesheet" href="./src/liquid-glass${version}.css">`);
+    document.write('<link rel="stylesheet" href="./src/liquid-glass.previous.css">');
     if (design !== 'previous') document.write('<link rel="stylesheet" href="./src/popup-glass.css">');
   </script>
   <script type="module" src="./src/main.js"></script>

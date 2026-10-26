@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { existsSync } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
@@ -17,8 +17,11 @@ const types = {
 };
 
 const localPython = join(root, '.venv', process.platform === 'win32' ? 'Scripts' : 'bin', process.platform === 'win32' ? 'python.exe' : 'python');
-const pythonCommand = process.env.YFINANCE_PYTHON || process.env.PYTHON || (existsSync(localPython) ? localPython : process.platform === 'win32' ? 'py' : 'python3');
-const pythonArgs = process.env.YFINANCE_PYTHON || process.env.PYTHON || existsSync(localPython) ? [] : process.platform === 'win32' ? ['-3'] : [];
+const configuredPython = process.env.YFINANCE_PYTHON || process.env.PYTHON;
+const hasPythonLauncher = !configuredPython && !existsSync(localPython) && process.platform === 'win32'
+  && spawnSync('py', ['-3', '-c', 'import sys'], { windowsHide: true, stdio: 'ignore', timeout: 3000 }).status === 0;
+const pythonCommand = configuredPython || (existsSync(localPython) ? localPython : process.platform === 'win32' ? (hasPythonLauncher ? 'py' : 'python') : 'python3');
+const pythonArgs = hasPythonLauncher ? ['-3'] : [];
 const workerPath = join(root, 'src', 'yfinance_worker.py');
 
 class YFinanceWorker {
@@ -41,6 +44,8 @@ class YFinanceWorker {
         stdio: ['pipe', 'pipe', 'pipe']
       });
       this.child = child;
+      // A worker may exit between the readiness check and a write.
+      child.stdin.on('error', () => {});
       const lines = createInterface({ input: child.stdout });
       let stderr = '';
       const timer = setTimeout(() => fail(new Error('The local yfinance worker did not start in time.')), 8000);
@@ -51,11 +56,13 @@ class YFinanceWorker {
         clearTimeout(timer);
         this.starting = null;
         this.ready = false;
+        if (this.child === child) this.child = null;
         rejectReady(error);
         child.kill();
       };
 
       lines.on('line', line => {
+        if (this.child !== child) return;
         let message;
         try { message = JSON.parse(line); } catch { return; }
         if (message.kind === 'ready') {
@@ -75,6 +82,7 @@ class YFinanceWorker {
         const pending = this.pending.get(message.id);
         if (!pending) return;
         this.pending.delete(message.id);
+        clearTimeout(pending.timer);
         if (message.ok) pending.resolve(message.data);
         else pending.reject(new Error(message.error || 'yfinance could not load market data.'));
       });
@@ -87,13 +95,14 @@ class YFinanceWorker {
           : 'Could not start the configured Python interpreter: ' + error.message
       )));
       child.once('close', code => {
+        if (this.child !== child) return;
         const detail = stderr.trim();
         const error = new Error(detail || 'The local yfinance worker stopped' + (code == null ? '.' : ' (exit ' + code + ').'));
         if (!settled) fail(error);
         this.ready = false;
         this.child = null;
         this.starting = null;
-        for (const request of this.pending.values()) request.reject(error);
+        for (const request of this.pending.values()) { clearTimeout(request.timer); request.reject(error); }
         this.pending.clear();
       });
     });
@@ -104,11 +113,22 @@ class YFinanceWorker {
     await this.start();
     if (!this.child || !this.ready) throw new Error('The local yfinance worker is not running.');
     const id = ++this.nextId;
-    const promise = new Promise((resolveResult, rejectResult) => this.pending.set(id, { resolve: resolveResult, reject: rejectResult }));
+    const child = this.child;
+    const promise = new Promise((resolveResult, rejectResult) => {
+      const timer = setTimeout(() => {
+        if (this.child !== child) return;
+        const error = new Error('The local yfinance worker request timed out.');
+        this.ready = false; this.child = null; this.starting = null;
+        for (const request of this.pending.values()) { clearTimeout(request.timer); request.reject(error); }
+        this.pending.clear();
+        child.kill();
+      }, 40_000);
+      this.pending.set(id, { resolve: resolveResult, reject: rejectResult, timer });
+    });
     this.child.stdin.write(JSON.stringify({ id, symbol, expiration }) + '\n', error => {
       if (error) {
-        this.pending.get(id)?.reject(error);
-        this.pending.delete(id);
+        const pending = this.pending.get(id);
+        if (pending) { clearTimeout(pending.timer); pending.reject(error); this.pending.delete(id); }
       }
     });
     return promise;
@@ -166,6 +186,7 @@ async function marketData(symbol, expiration) {
     nextUpstreamRequestAt = Math.max(now, nextUpstreamRequestAt) + minimumFetchGapMs;
     if (wait) await new Promise(resolveDelay => setTimeout(resolveDelay, wait));
     if (rateLimitUntil > Date.now()) throw Object.assign(new Error(rateLimitMessage()), { statusCode: 429 });
+    if (connectionPauseUntil > Date.now()) throw Object.assign(new Error(connectionPauseMessage()), { statusCode: 503 });
 
     try {
       const data = await worker.request(symbol, expiration);
@@ -174,10 +195,9 @@ async function marketData(symbol, expiration) {
       connectionPauseUntil = 0;
       nextConnectionPauseMs = 30_000;
       const entry = { data, expiresAt: Date.now() + cacheTtlMs };
-      if (marketCache.size >= 100) marketCache.delete(marketCache.keys().next().value);
-      marketCache.set(key, entry);
-      marketCache.set(cacheKey(symbol, data.selectedExpiration), entry);
-      marketCache.set(cacheKey(symbol, ''), entry);
+      if (!expiration || data.selectedExpiration === expiration) marketCache.set(key, entry);
+      if (!expiration && data.selectedExpiration) marketCache.set(cacheKey(symbol, data.selectedExpiration), entry);
+      while (marketCache.size > 100) marketCache.delete(marketCache.keys().next().value);
       return data;
     } catch (error) {
       if (isRateLimit(error)) {
@@ -209,6 +229,9 @@ function sendJson(response, statusCode, body) {
 
 const server = createServer(async (request, response) => {
   try {
+    if (!/^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(request.headers.host || '')) {
+      response.writeHead(403).end('Forbidden'); return;
+    }
     const requestUrl = new URL(request.url, 'http://localhost');
     const pathname = decodeURIComponent(requestUrl.pathname);
 
@@ -241,6 +264,8 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    const allowed = pathname === '/' || pathname === '/index.html' || pathname === '/liquid.html' || /^\/src\/(?:main|yfinance|pricing|contract-mapping|strategies|strikes|tickers|chart-scale|glass-optics|liquid-glass)\.js$/.test(pathname) || /^\/src\/(?:styles\.(?:hierarchy|previous)|liquid-glass(?:\.previous)?|popup-glass)\.css$/.test(pathname);
+    if (!allowed || request.method !== 'GET') { response.writeHead(404).end('Not found'); return; }
     let file = resolve(root, '.' + pathname);
     if (file !== root && !file.startsWith(root + sep)) {
       response.writeHead(403).end('Forbidden');

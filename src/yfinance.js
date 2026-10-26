@@ -45,8 +45,7 @@ export class YFinanceClient {
     }
 
     const entry = { data: body, expiresAt: Date.now() + CACHE_TTL_MS };
-    this.cache.set(key, entry);
-    this.cache.set(this.key(symbol, ''), entry);
+    if (!expiration || body.selectedExpiration === expiration) this.cache.set(key, entry);
     if (body.selectedExpiration) this.cache.set(this.key(symbol, body.selectedExpiration), entry);
     return body;
   }
@@ -64,7 +63,9 @@ export class YFinanceClient {
   }
 
   async chain(symbol, expiration) {
-    return (await this.request(symbol, expiration)).chain;
+    const data = await this.request(symbol, expiration);
+    if (expiration && data.selectedExpiration !== expiration) throw new Error('The requested expiration is no longer available. Reload market data to see current expirations.');
+    return data.chain;
   }
 
   async history() {

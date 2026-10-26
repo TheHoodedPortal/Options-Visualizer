@@ -123,6 +123,25 @@ class YFinanceWorkerTests(unittest.TestCase):
         self.assertEqual(len(yf.tickers), 1)
         self.assertEqual(yf.tickers[0][1].requested_expirations, ["nearest", "2026-12-18"])
 
+    def test_requests_current_expiration_when_undated_chain_is_stale(self):
+        class StaleTicker(FakeTicker):
+            options = ("2026-10-01", "2026-11-20", "2026-12-18")
+
+        class StaleFinance(FakeYFinance):
+            def Ticker(self, symbol):
+                ticker = StaleTicker()
+                self.tickers.append((symbol, ticker))
+                return ticker
+
+        yf = StaleFinance()
+        result = market_snapshot(yf, {}, "MU", today=datetime.date(2026, 10, 10))
+        self.assertEqual(result["selectedExpiration"], "2026-11-20")
+        self.assertEqual(yf.tickers[0][1].requested_expirations, ["nearest", "2026-11-20"])
+
+    def test_rejects_all_expired_contracts(self):
+        with self.assertRaisesRegex(ValueError, "no current option expirations"):
+            market_snapshot(FakeYFinance(), {}, "MU", today=datetime.date(2027, 1, 1))
+
     def test_uses_trailing_dividend_rate_when_yield_is_missing(self):
         class RateOnlyOptionSet(OptionSet):
             underlying = {

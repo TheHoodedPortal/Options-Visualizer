@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { snapStrike, snapStrikeForDrag, standardStrikeStep } from '../src/strikes.js';
+import { snapStrike, snapStrikeForDrag, standardStrikeStep, adjacentStrike } from '../src/strikes.js';
 import { closestStrikeAtDelta, contractImpliedVolatility } from '../src/contract-mapping.js';
 import { optionDelta, PRICING_MODELS } from '../src/pricing.js';
 
@@ -20,13 +20,13 @@ test('uses a sensible stock-price interval when no nearby contracts are present'
   assert.equal(snapStrike([], 1029, 1031.8), 1030);
 });
 
-test('dragging a call near an opposite-type leg aligns to its exact strike', () => {
+test('dragging does not snap to an unlisted opposite-type strike', () => {
   const chain = [1000, 1010, 1020, 1030, 1040, 1050].map(strike => ({ strike }));
   const call = { id: 1, type: 'call', strike: 1020 };
   const put = { id: 2, type: 'put', strike: 1045 };
 
   assert.equal(snapStrike(chain, 1029, 1044), 1040);
-  assert.equal(snapStrikeForDrag(chain, 1029, 1044, call, [call, put]), 1045);
+  assert.equal(snapStrikeForDrag(chain, 1029, 1044, call, [call, put]), 1040);
   assert.equal(snapStrikeForDrag(chain, 1029, 1035, call, [call, put]), 1040);
 });
 
@@ -49,4 +49,18 @@ test('normalizes Yahoo implied volatility values and falls back when missing', (
   assert.equal(contractImpliedVolatility(.42, .3), .42);
   assert.equal(contractImpliedVolatility(42, .3), .42);
   assert.equal(contractImpliedVolatility(0, .3), .3);
+});
+
+test('snaps to actual strikes for the requested option type', () => {
+  const chain = [{ type: 'call', strike: 92.5 }, { type: 'call', strike: 97.5 }, { type: 'put', strike: 100 }];
+  assert.equal(snapStrike(chain, 100, 97.5, 'call'), 97.5);
+  assert.equal(snapStrike(chain, 100, 97.5, 'put'), 100);
+});
+
+test('keyboard movement reaches adjacent strikes across uneven grids', () => {
+  const chain = [{type: 'call', strike: 90}, {type: 'call', strike: 90.5}, {type: 'call', strike: 100}, {type: 'put', strike: 95}];
+  assert.equal(adjacentStrike(chain, 95, 90.5, 'call', 1), 100);
+  assert.equal(adjacentStrike(chain, 95, 100, 'call', -1), 90.5);
+  assert.equal(adjacentStrike(chain, 95, 100, 'call', 1), 100);
+  assert.equal(adjacentStrike([], 20, 20, 'call', -1), 19.5);
 });

@@ -13,7 +13,9 @@ export function standardStrikeStep(chain, spot) {
   return 5;
 }
 
-export function snapStrike(chain, spot, desired) {
+export function snapStrike(chain, spot, desired, type = null) {
+  const listed = (chain || []).filter(option => !type || option.type === type).map(option => Number(option.strike)).filter(strike => Number.isFinite(strike) && strike > 0);
+  if (listed.length) return listed.reduce((best, strike) => Math.abs(strike - desired) < Math.abs(best - desired) ? strike : best);
   const step = standardStrikeStep(chain, spot);
   return Math.max(step, Number((Math.round(desired / step) * step).toFixed(3)));
 }
@@ -23,7 +25,19 @@ export function snapStrikeForDrag(chain, spot, desired, movingLeg, legs) {
   const nearestOpposite = (legs || [])
     .filter(leg => leg.id !== movingLeg?.id && leg.type !== movingLeg?.type && !leg.excluded)
     .sort((a, b) => Math.abs(a.strike - desired) - Math.abs(b.strike - desired))[0];
-  if (nearestOpposite && Math.abs(nearestOpposite.strike - desired) <= step * .75 + 1e-6) return nearestOpposite.strike;
-  return snapStrike(chain, spot, desired);
+  const listedForType = (chain || []).filter(option => option.type === movingLeg?.type);
+  if (nearestOpposite && Math.abs(nearestOpposite.strike - desired) <= step * .75 + 1e-6 && (!chain?.length || listedForType.some(option => option.strike === nearestOpposite.strike))) return nearestOpposite.strike;
+  return snapStrike(chain, spot, desired, movingLeg?.type);
 }
 
+
+// Move to an adjacent listed strike even when the grid has uneven gaps.
+export function adjacentStrike(chain, spot, current, type, direction) {
+  const strikes = [...new Set((chain || []).filter(option => option.type === type)
+    .map(option => Number(option.strike)).filter(strike => Number.isFinite(strike) && strike > 0))].sort((a, b) => a - b);
+  if (strikes.length) {
+    const next = direction > 0 ? strikes.find(strike => strike > current + 1e-8) : [...strikes].reverse().find(strike => strike < current - 1e-8);
+    return next ?? current;
+  }
+  return snapStrike([], spot, Math.max(.01, current + direction * standardStrikeStep([], spot)), type);
+}

@@ -76,11 +76,13 @@ def market_snapshot(yf, ticker_cache, symbol, expiration=None, today=None):
         raise ValueError("Yahoo Finance returned no listed option expirations for " + symbol + ".")
 
     today_text = (today or datetime.date.today()).isoformat()
-    nearest = next(
-        (value for value in expirations if value >= today_text), expirations[0]
-    )
+    nearest = next((value for value in expirations if value >= today_text), None)
+    if nearest is None:
+        raise ValueError("Yahoo Finance returned no current option expirations for " + symbol + ".")
     selected = expiration if expiration in expirations else nearest
-    option_set = nearest_option_set if selected == nearest else ticker.option_chain(selected)
+    # The undated response corresponds to the first listed expiration, which
+    # can differ from the first current expiration if stale dates are present.
+    option_set = nearest_option_set if selected == expirations[0] else ticker.option_chain(selected)
     chain = option_rows(option_set.calls, "call") + option_rows(option_set.puts, "put")
     if not chain:
         raise ValueError("Yahoo Finance returned no standard option contracts for " + symbol + " " + selected + ".")

@@ -15,8 +15,13 @@ const names = {
   'long-guts': 'Long Guts', 'long-strangle': 'Long Strangle', custom: 'Custom Strategy'
 };
 const currency = () => market.connected && market.quote?.currency ? market.quote.currency : null;
-const currencyLabel = () => currency() || 'Currency';
-const currencyPrefix = () => currencyLabel() + ' ';
+const currencyLabel = () => {
+  const code = currency();
+  if (!code) return '$'; // Illustrative values when no quote currency is available.
+  try { return new Intl.NumberFormat('en-US', { style: 'currency', currency: code, currencyDisplay: 'narrowSymbol' }).formatToParts(0).find(part => part.type === 'currency')?.value || code; }
+  catch { return code; }
+};
+const currencyPrefix = () => currencyLabel();
 const money = (n, decimals = 0) => Number.isFinite(n) ? currencyPrefix() + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals }) : 'Infinite';
 const signed = (n, suffix = '') => Number.isFinite(n) ? (n < 0 ? '−' : '+') + Math.abs(n).toLocaleString('en-US', { maximumFractionDigits: 1 }) + suffix : '—';
 const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
@@ -1123,6 +1128,7 @@ function renderDataStatus() {
     if (adjusted) parts.push(node('span', '', 'Custom underlying price'));
     parts.push(node('span', 'quote-freshness', 'Delayed'));
     parts.push(node('span', '', asOf ? 'Quote as of ' + asOf : 'Quote time unavailable'));
+    parts.push(node('span', '', currency() ? 'Currency: ' + currency() : 'Currency unavailable'));
     if (state.legs.some(leg => !market.chain.some(option => option.type === leg.type && Math.abs(option.strike - leg.strike) < .001))) parts.push(node('span', '', 'Some saved positions are not listed in the current chain'));
     if (market.error) parts.push(node('span', '', 'Refresh unavailable'));
     else if (market.loading) parts.push(node('span', '', 'Refreshing…'));
@@ -1149,7 +1155,7 @@ function render() {
   closeContractMenu(false);
   $('spot-currency').textContent = currencyLabel();
   $('output-pl').textContent = 'Profit / loss ' + currencyLabel();
-  $('gamma-unit').textContent = 'shares / 1 ' + currencyLabel();
+  $('gamma-unit').textContent = 'shares / ' + currencyLabel() + '1';
   $('symbol-input').value = state.symbol;
   if (document.activeElement !== $('spot-input')) $('spot-input').value = state.spot.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   $('strategy-select').value = state.strategy;
@@ -1163,7 +1169,7 @@ function render() {
   } else {
     changeLabel.hidden = true;
   }
-  document.querySelector('.data-note').textContent = 'Payoffs are model estimates for the full strategy. Standard contracts represent 100 shares; prices are in ' + (market.connected && market.quote?.currency ? market.quote.currency : 'the quote currency') + '.';
+  document.querySelector('.data-note').textContent = 'Payoffs are model estimates for the full strategy. Standard contracts represent 100 shares.';
   renderExpiration(); renderRuler(); renderStats(); renderControls(); renderVisualization(); syncContractEditor();
 }
 function modal(title) {

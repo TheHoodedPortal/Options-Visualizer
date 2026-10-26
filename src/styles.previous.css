@@ -69,7 +69,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .symbol-suggestion-name { overflow: hidden; color: var(--color-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .symbol-suggestions-empty { padding: 10px; color: var(--color-muted); font-size: 11px; }
 .spot-field { display: inline-flex; align-items: center; font-size: 19px; font-weight: 680; white-space: nowrap; }
-.spot-field > span { margin-right: 5px; font-size: .65em; letter-spacing: normal; }
+.spot-field > span { margin-right: 2px; font-size: 1em; letter-spacing: normal; }
 .spot-field input { width: 95px; border: 0; background: transparent; color: inherit; padding: 1px 0; font-weight: inherit; appearance: textfield; }
 .spot-field input::-webkit-outer-spin-button, .spot-field input::-webkit-inner-spin-button { appearance: none; margin: 0; }
 .quote-change { display: grid; color: var(--color-red); font-size: 11px; line-height: 1.15; white-space: nowrap; }

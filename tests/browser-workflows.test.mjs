@@ -38,16 +38,17 @@ test('browser workflows keep dates, currency, saved trades, and the latest marke
   try {
     await import('../src/main.js');
     respond('MU', '2026-11-13', {currency: 'CAD'}); await flush();
-    assert.equal(el('spot-currency').textContent, 'CAD');
-    assert.match(el('net-value').textContent, /^CAD /);
-    assert.match(el('gamma-unit').textContent, /CAD/);
+    assert.equal(el('spot-currency').textContent, '$');
+    assert.match(el('data-status-detail').textContent, /Currency: CAD/);
+    assert.match(el('net-value').textContent, /^\$/);
+    assert.equal(el('gamma-unit').textContent, 'shares / $1');
     click('save-button');
     [...el('modal-content').querySelectorAll('button')].find(button => button.textContent === 'Save Locally').click();
     assert.equal(JSON.parse(w.localStorage.getItem('openstrat-trades')).length, 1);
 
     el('date-slider').value = '7'; el('date-slider').dispatchEvent(new w.Event('input'));
     assert.equal(el('date-label').textContent, 'Nov 7');
-    assert.equal(el('net-value').textContent, 'CAD 150');
+    assert.equal(el('net-value').textContent, '$150');
     // The timer advances the stored calendar date only once after midnight.
     now = new RealDate('2026-11-01T00:01:00-04:00').getTime();
     intervals[0]();
@@ -63,8 +64,9 @@ test('browser workflows keep dates, currency, saved trades, and the latest marke
     respond('MSFT', '2026-11-13', {currency:'EUR'}); await flush();
     respond('AAPL', '2026-11-13'); await flush();
     assert.equal(el('symbol-input').value, 'MSFT');
-    assert.equal(el('spot-currency').textContent, 'EUR');
-    assert.match(el('net-value').textContent, /^EUR /);
+    assert.equal(el('spot-currency').textContent, '€');
+    assert.match(el('data-status-detail').textContent, /Currency: EUR/);
+    assert.match(el('net-value').textContent, /^€/);
 
     const selectExpiry = date => [...el('expiration-strip').querySelectorAll('button')].find(button => button.getAttribute('aria-label')?.includes(date)).click();
     selectExpiry('November 20, 2026');
@@ -77,8 +79,9 @@ test('browser workflows keep dates, currency, saved trades, and the latest marke
     [...el('modal-content').querySelectorAll('button')].find(button => button.textContent === 'Load').click();
     await flush(); // MU's earlier quote is cached.
     assert.equal(el('symbol-input').value, 'MU');
-    assert.equal(el('spot-currency').textContent, 'CAD');
-    assert.equal(el('net-value').textContent, 'CAD 150');
+    assert.equal(el('spot-currency').textContent, '$');
+    assert.match(el('data-status-detail').textContent, /Currency: CAD/);
+    assert.equal(el('net-value').textContent, '$150');
 
     // Starting with calls only must reject puts and prevent invented contracts.
     el('symbol-input').value = 'CALL'; el('symbol-input').dispatchEvent(new w.Event('change'));

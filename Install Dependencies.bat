@@ -7,10 +7,7 @@ echo.
 
 set "NEED_NODE=0"
 set "NEED_PYTHON=0"
-set "NODE_EXISTS=0"
 
-where node >nul 2>&1
-if not errorlevel 1 set "NODE_EXISTS=1"
 call :node_ready
 if errorlevel 1 set "NEED_NODE=1"
 
@@ -28,7 +25,8 @@ where winget >nul 2>&1
 if errorlevel 1 goto manual_downloads
 
 if "%NEED_NODE%"=="1" (
-  if "%NODE_EXISTS%"=="1" (
+  winget list --id OpenJS.NodeJS.LTS --exact --source winget --accept-source-agreements 2>nul | findstr /i /c:"OpenJS.NodeJS.LTS" >nul
+  if not errorlevel 1 (
     echo Updating Node.js to a supported version...
     winget upgrade --id OpenJS.NodeJS.LTS --exact --source winget
   ) else (

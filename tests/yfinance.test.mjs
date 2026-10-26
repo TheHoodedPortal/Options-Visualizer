@@ -92,3 +92,18 @@ test('does not treat a fallback chain as the requested expiration', async () => 
   assert.equal(calls, 2);
   assert.equal((await client.request('MU', '2026-11-13')).selectedExpiration, '2026-11-13');
 });
+
+test('superseded requests can be aborted without canceling another request', async () => {
+  const calls = [];
+  const client = new YFinanceClient((url, { signal }) => new Promise((resolve, reject) => {
+    calls.push({ resolve, signal });
+    signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+  }));
+  const firstController = new AbortController();
+  const first = client.request('MU', '2026-11-13', { signal: firstController.signal });
+  const second = client.request('MU', '2026-11-13', { signal: new AbortController().signal });
+  firstController.abort();
+  await assert.rejects(first, error => error.name === 'AbortError');
+  calls[1].resolve({ ok: true, json: async () => ({ quote: {}, expirations: ['2026-11-13'], selectedExpiration: '2026-11-13', chain: [] }) });
+  assert.equal((await second).selectedExpiration, '2026-11-13');
+});

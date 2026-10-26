@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { RequestQueue } from './src/request-queue.js';
 import { spawn, spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { existsSync } from 'node:fs';
@@ -143,8 +144,7 @@ const worker = new YFinanceWorker();
 const marketCache = new Map();
 const marketPending = new Map();
 const cacheTtlMs = 5 * 60_000;
-const minimumFetchGapMs = 5_000;
-let nextUpstreamRequestAt = 0;
+const marketQueue = new RequestQueue();
 let rateLimitUntil = 0;
 let nextRateLimitCooldownMs = 5 * 60_000;
 let connectionPauseUntil = 0;
@@ -172,19 +172,18 @@ function connectionPauseMessage() {
   return 'Yahoo Finance could not be reached. Requests are paused for ' + seconds + ' seconds; wait before trying again.';
 }
 
-async function marketData(symbol, expiration) {
+async function marketData(symbol, expiration, signal) {
+  if (signal?.aborted) throw new Error('Request canceled.');
   const key = cacheKey(symbol, expiration);
   const cached = marketCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.data;
-  if (marketPending.has(key)) return marketPending.get(key);
+  if (marketPending.has(key)) return waitForMarket(marketPending.get(key), signal);
   if (rateLimitUntil > Date.now()) throw Object.assign(new Error(rateLimitMessage()), { statusCode: 429 });
   if (connectionPauseUntil > Date.now()) throw Object.assign(new Error(connectionPauseMessage()), { statusCode: 503 });
 
-  const pending = (async () => {
-    const now = Date.now();
-    const wait = Math.max(0, nextUpstreamRequestAt - now);
-    nextUpstreamRequestAt = Math.max(now, nextUpstreamRequestAt) + minimumFetchGapMs;
-    if (wait) await new Promise(resolveDelay => setTimeout(resolveDelay, wait));
+  const controller = new AbortController();
+  const entry = { controller, key, clients: 0, settled: false };
+  const pending = marketQueue.enqueue(async () => {
     if (rateLimitUntil > Date.now()) throw Object.assign(new Error(rateLimitMessage()), { statusCode: 429 });
     if (connectionPauseUntil > Date.now()) throw Object.assign(new Error(connectionPauseMessage()), { statusCode: 503 });
 
@@ -212,11 +211,33 @@ async function marketData(symbol, expiration) {
       }
       throw error;
     }
-  })();
+  }, controller.signal);
 
-  marketPending.set(key, pending);
-  try { return await pending; }
-  finally { marketPending.delete(key); }
+  entry.promise = pending.finally(() => { entry.settled = true; if (marketPending.get(key) === entry) marketPending.delete(key); });
+  marketPending.set(key, entry);
+  return waitForMarket(entry, signal);
+}
+
+function waitForMarket(entry, signal) {
+  if (signal?.aborted) return Promise.reject(new Error('Request canceled.'));
+  entry.clients++;
+  return new Promise((resolve, reject) => {
+    let finished = false;
+    const finish = (fn, value) => {
+      if (finished) return;
+      finished = true;
+      signal?.removeEventListener('abort', abort);
+      entry.clients--;
+      if (!entry.clients && !entry.settled) {
+        if (marketPending.get(entry.key) === entry) marketPending.delete(entry.key);
+        entry.controller.abort();
+      }
+      fn(value);
+    };
+    const abort = () => finish(reject, new Error('Request canceled.'));
+    signal?.addEventListener('abort', abort, { once: true });
+    entry.promise.then(value => finish(resolve, value), error => finish(reject, error));
+  });
 }
 
 function sendJson(response, statusCode, body) {
@@ -255,11 +276,14 @@ const server = createServer(async (request, response) => {
         sendJson(response, 400, { error: 'Expiration must be a date in YYYY-MM-DD format.' });
         return;
       }
+      const controller = new AbortController();
+      response.once('close', () => { if (!response.writableEnded) controller.abort(); });
       try {
-        sendJson(response, 200, await marketData(symbol, expiration));
+        const data = await marketData(symbol, expiration, controller.signal);
+        if (!controller.signal.aborted) sendJson(response, 200, data);
       } catch (error) {
         const status = error.statusCode || (/Python 3|yfinance package|Python interpreter|local yfinance worker/i.test(error.message) ? 503 : 502);
-        sendJson(response, status, { error: error.message || 'yfinance could not load market data.' });
+        if (!controller.signal.aborted) sendJson(response, status, { error: error.message || 'yfinance could not load market data.' });
       }
       return;
     }

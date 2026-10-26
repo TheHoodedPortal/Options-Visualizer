@@ -33,6 +33,8 @@ const displayDate = date => new Date(date + 'T00:00:00').toLocaleDateString('en-
 const defaultExpiry = today <= new Date('2026-11-13T00:00:00') ? '2026-11-13' : iso(dateAfter(36));
 let market = { client: null, connected: false, quote: null, expirations: [], chain: [], loading: true, error: '' };
 let marketRequestVersion = 0;
+let marketAbort = null;
+function cancelMarketRequest() { marketAbort?.abort(); marketAbort = null; }
 let restoredFromLink = false;
 let state = {
   symbol: 'MU', spot: 1047.60, iv: 0.465, expiry: defaultExpiry, strategy: 'long-call',
@@ -128,12 +130,12 @@ function showToast(message) {
 function availableStrike(type, desired) {
   return snapStrike(market.connected ? market.chain : [], state.spot, desired, type, market.connected);
 }
-function samplePremium(type, strike) {
+function samplePremium(type, strike, side = 1) {
   if (market.connected) {
     const quote = market.chain.find(option => option.type === type && Math.abs(option.strike - strike) < .001);
     if (quote) {
       const bid = Number(quote.bid), ask = Number(quote.ask);
-      if (bid >= 0 && ask > 0 && bid <= ask) return Math.round((bid + ask) * 50) / 100;
+      if (bid >= 0 && ask > 0 && bid <= ask) return side === 1 ? ask : bid;
       if (Number(quote.last) > 0) return Number(quote.last);
     }
   }
@@ -145,7 +147,7 @@ function classifyStrategy() {
 }
 function makeLeg(type, side, strike, qty = 1) {
   strike = availableStrike(type, strike);
-  return { id: nextId++, type, side, strike, qty, premium: samplePremium(type, strike), manual: false, excluded: false };
+  return { id: nextId++, type, side, strike, qty, premium: samplePremium(type, strike, side), manual: false, excluded: false };
 }
 function preset(key) {
   const needsCall = !['long-put', 'bear-put-spread'].includes(key);
@@ -211,7 +213,7 @@ function renderExpiration() {
       if (market.connected) { loadMarketExpiry(value); return; }
       state.expiry = value;
       state.day = 0;
-      for (const leg of state.legs) if (!leg.manual) leg.premium = samplePremium(leg.type, leg.strike);
+      for (const leg of state.legs) if (!leg.manual) leg.premium = samplePremium(leg.type, leg.strike, leg.side);
       render();
     };
     daysBox.append(button);
@@ -433,13 +435,13 @@ function openContractEditor(legId) {
       button.onclick = () => {
         const current = state.legs.find(item => item.id === contractEditorLegId);
         if (!current) return;
-        if (property === 'side') current.side = Number(value);
+        if (property === 'side') { current.side = Number(value); if (!current.manual) current.premium = samplePremium(current.type, current.strike, current.side); }
         else if (current.type !== value) {
           const strike = availableStrike(value, current.strike);
           if (strike == null) { showToast('No listed ' + value + ' contracts are available for this expiration.'); return; }
           current.type = value;
           current.strike = strike;
-          current.premium = samplePremium(value, current.strike);
+          current.premium = samplePremium(value, current.strike, current.side);
           current.manual = false;
         }
         classifyStrategy(); render();
@@ -570,7 +572,7 @@ function rulerBounds() {
   const baseMin = Math.max(.01, state.spot * (1 - state.range / 100));
   const baseMax = state.spot * (1 + state.range / 100);
   const strikes = state.legs.map(leg => leg.strike);
-  const pad = Math.max(5, state.spot * .0125);
+  const pad = Math.max(.01, Math.min(5, state.spot * .05), state.spot * .0125);
   return {
     min: Math.max(.01, Math.min(baseMin, ...strikes.map(strike => strike - pad))),
     max: Math.max(baseMax, ...strikes.map(strike => strike + pad))
@@ -586,13 +588,13 @@ function renderRuler() {
   const plotWidth = $('ruler-ticks').clientWidth;
   const minLabelGap = window.innerWidth < 600 ? 36 : 52;
   const labelSteps = [5, 10, 25, 50, 100, 200, 250, 500, 1000, 2000, 5000, 10000];
-  const majorStep = labelSteps.find(step => step / span * plotWidth >= minLabelGap) || Math.max(labelSteps.at(-1), Math.ceil(span / 10));
-  const minorStep = Math.max(1, majorStep / 5);
+  const majorStep = state.spot < 1 ? niceTicks(bounds.min, bounds.max, Math.max(2, Math.floor(plotWidth / minLabelGap))).step : labelSteps.find(step => step / span * plotWidth >= minLabelGap) || Math.max(labelSteps.at(-1), Math.ceil(span / 10));
+  const minorStep = state.spot < 1 ? majorStep / 5 : Math.max(1, majorStep / 5);
   for (let strike = Math.ceil(bounds.min / minorStep) * minorStep; strike <= bounds.max; strike += minorStep) {
-    const major = strike % majorStep === 0 && strike > bounds.min + majorStep * .4 && strike < bounds.max - majorStep * .4;
+    const major = Math.abs(strike / majorStep - Math.round(strike / majorStep)) < 1e-8 && strike > bounds.min + majorStep * .4 && strike < bounds.max - majorStep * .4;
     const tick = node('div', 'ruler-tick' + (major ? ' major' : '') + (Math.abs(strike - state.spot) < 25 ? ' near' : ''));
     tick.style.left = ((strike - bounds.min) / span * 100) + '%';
-    if (major) tick.append(node('span', '', String(strike)));
+    if (major) tick.append(node('span', '', String(Number(strike.toFixed(6)))));
     ticks.append(tick);
   }
   const placement = new Map();
@@ -670,7 +672,7 @@ function renderRuler() {
         if (desired == null) { showToast('No listed ' + item.type + ' contracts are available for this expiration.'); continue; }
         item.strike = desired;
         item.manual = false;
-        item.premium = samplePremium(item.type, desired);
+        item.premium = samplePremium(item.type, desired, item.side);
       }
       classifyStrategy(); render();
       requestAnimationFrame(() => $('strike-markers').querySelector('[data-leg-id="' + current.id + '"]')?.focus());
@@ -717,7 +719,7 @@ document.addEventListener('pointermove', event => {
     if (desired == null || leg.strike === desired) continue;
     leg.strike = desired;
     leg.manual = false;
-    leg.premium = samplePremium(leg.type, desired);
+    leg.premium = samplePremium(leg.type, desired, leg.side);
     changed = true;
     const marker = [...$('strike-markers').children].find(item => Number(item.dataset.legId) === leg.id);
     if (marker) {
@@ -896,8 +898,7 @@ function makeChartModel(chart) {
   const right = 14, top = 24, bottom = 30;
   const bounds = rulerBounds();
   const targetTicks = Math.max(1, Math.floor((width - left - right) / 58));
-  // Keep price labels on whole-dollar values, even for low-priced underlyings.
-  const xAxis = wholeDollarTicks(bounds.min, bounds.max, targetTicks);
+  const xAxis = state.spot < 1 ? niceTicks(bounds.min, bounds.max, targetTicks) : wholeDollarTicks(bounds.min, bounds.max, targetTicks);
   const minPrice = xAxis.ticks[0] ?? bounds.min;
   const maxPrice = xAxis.ticks.at(-1) ?? bounds.max;
   const dte = daysUntil(state.expiry);
@@ -1008,7 +1009,7 @@ function drawChartFrame(model) {
     const labelX = i === xAxis.ticks.length - 1 ? width - right - 2 : i === 0 ? left + 2 : x;
     const anchor = i === xAxis.ticks.length - 1 ? 'end' : i === 0 ? 'start' : 'middle';
     const text = svgNode('text', { x: labelX, y: height - 8, fill: 'var(--color-muted)', 'font-size': 11, 'text-anchor': anchor });
-    text.textContent = money(price);
+    text.textContent = money(price, xAxis.step < .01 ? 3 : xAxis.step < 1 ? 2 : 0);
     chart.append(text);
   }
   chart.append(svgNode('line', { x1: left, y1: zero, x2: width - right, y2: zero, stroke: 'var(--color-muted)', 'stroke-width': 1.2 }));
@@ -1171,7 +1172,7 @@ function render() {
   } else {
     changeLabel.hidden = true;
   }
-  document.querySelector('.data-note').textContent = 'Payoffs and portfolio Greeks use the same flat scenario volatility for every position. Standard contracts represent 100 shares.';
+  document.querySelector('.data-note').textContent = 'Payoffs and portfolio Greeks use the same flat scenario volatility for every position. Entry estimates use ask for buys and bid for sells; actual fills may differ. Standard contracts represent 100 shares.';
   renderExpiration(); renderRuler(); renderStats(); renderControls(); renderVisualization(); syncContractEditor();
 }
 function modal(title) {
@@ -1232,6 +1233,8 @@ function captureContractDeltas() {
 }
 
 async function loadMarketSymbol(client, symbol, deltaTargets = null, preservePositions = false) {
+  cancelMarketRequest();
+  const controller = marketAbort = new AbortController();
   const version = ++marketRequestVersion;
   market.loading = true;
   market.error = '';
@@ -1239,7 +1242,7 @@ async function loadMarketSymbol(client, symbol, deltaTargets = null, preservePos
   let quote, dates, expiry, chain;
   try {
     if (typeof client.loadSymbol === 'function') {
-      const snapshot = await client.loadSymbol(symbol, state.expiry);
+      const snapshot = await client.loadSymbol(symbol, state.expiry, { signal: controller.signal });
       quote = snapshot.quote;
       dates = snapshot.expirations;
       expiry = dates.includes(snapshot.selectedExpiration) ? snapshot.selectedExpiration : dates.includes(state.expiry) ? state.expiry : dates[0];
@@ -1249,7 +1252,7 @@ async function loadMarketSymbol(client, symbol, deltaTargets = null, preservePos
     }
     if (!dates.length) throw new Error('No option expirations were returned for ' + symbol + '.');
     if (!expiry) expiry = dates.includes(state.expiry) ? state.expiry : dates.find(date => daysUntil(date) > 0) || dates[0];
-    if (!chain) chain = await client.chain(symbol, expiry);
+    if (!chain) chain = await client.chain(symbol, expiry, { signal: controller.signal });
     if (!chain.length) throw new Error('No standard 100-share options were returned for this expiration.');
     if (!preservePositions && state.legs.some(leg => !chain.some(option => option.type === leg.type))) throw new Error('No listed contracts are available for a position type in this expiration.');
     if (preservePositions && expiry !== state.expiry) throw new Error('The saved expiration is no longer listed. Saved positions remain unchanged.');
@@ -1265,13 +1268,13 @@ async function loadMarketSymbol(client, symbol, deltaTargets = null, preservePos
   marketRetryAt = 0;
   if (symbol !== state.symbol) state.dividendYieldMode = 'auto';
   state.symbol = symbol;
-  state.spot = Number(quote.last);
-  if (state.dividendYieldMode === 'auto') state.dividendYield = clamp(Number(quote.dividendYield) || 0, 0, .25);
+  if (!preservePositions) state.spot = Number(quote.last);
+  if (!preservePositions && state.dividendYieldMode === 'auto') state.dividendYield = clamp(Number(quote.dividendYield) || 0, 0, .25);
   state.expiry = expiry;
   if (!preservePositions) state.day = 0;
   else state.day = clamp(state.day, 0, daysUntil(expiry));
   const near = chain.filter(option => option.type === 'call' && option.iv > 0).sort((a, b) => Math.abs(a.strike - state.spot) - Math.abs(b.strike - state.spot))[0];
-  if (near) state.iv = contractImpliedVolatility(near.iv, state.iv);
+  if (near && !preservePositions) state.iv = contractImpliedVolatility(near.iv, state.iv);
   const targetsById = new Map((deltaTargets || []).map(target => [target.id, target]));
   for (const leg of state.legs) {
     if (preservePositions) continue;
@@ -1292,7 +1295,7 @@ async function loadMarketSymbol(client, symbol, deltaTargets = null, preservePos
     } else if (candidates.length && !candidates.some(option => Math.abs(option.strike - leg.strike) < .001)) {
       leg.strike = candidates.reduce((best, option) => Math.abs(option.strike - leg.strike) < Math.abs(best.strike - leg.strike) ? option : best, candidates[0]).strike;
     }
-    if (!leg.manual) leg.premium = samplePremium(leg.type, leg.strike);
+    if (!leg.manual) leg.premium = samplePremium(leg.type, leg.strike, leg.side);
   }
   render();
   return true;
@@ -1356,6 +1359,7 @@ async function commitTicker(value) {
       tickerCommitVersion++;
       requestedSymbol = '';
       marketRequestVersion++;
+      cancelMarketRequest();
       market.loading = false;
       render();
     }
@@ -1386,10 +1390,12 @@ function chooseTicker(symbol) {
   commitTicker(symbol);
 }
 async function loadMarketExpiry(value) {
+  cancelMarketRequest();
+  const controller = marketAbort = new AbortController();
   const version = ++marketRequestVersion;
   const symbol = state.symbol, client = market.client;
   try {
-    const chain = await client.chain(symbol, value);
+    const chain = await client.chain(symbol, value, { signal: controller.signal });
     if (version !== marketRequestVersion || state.symbol !== symbol || market.client !== client) return;
     if (!chain.length) throw new Error('No standard options returned for that expiration.');
     if (state.legs.some(leg => !chain.some(option => option.type === leg.type))) throw new Error('No listed contracts are available for a position type in that expiration.');
@@ -1401,7 +1407,7 @@ async function loadMarketExpiry(value) {
     if (near) state.iv = contractImpliedVolatility(near.iv, state.iv);
     for (const leg of state.legs) {
       leg.strike = availableStrike(leg.type, leg.strike);
-      if (!leg.manual) leg.premium = samplePremium(leg.type, leg.strike);
+      if (!leg.manual) leg.premium = samplePremium(leg.type, leg.strike, leg.side);
     }
     render();
   } catch (error) { if (version === marketRequestVersion) { market.loading = false; renderDataStatus(); showToast(error.message); } }
@@ -1456,7 +1462,7 @@ function openCustomExpiry() {
     if (market.connected) { closeModal(); loadMarketExpiry(value); return; }
     state.expiry = value;
     state.day = 0;
-    for (const leg of state.legs) if (!leg.manual) leg.premium = samplePremium(leg.type, leg.strike);
+    for (const leg of state.legs) if (!leg.manual) leg.premium = samplePremium(leg.type, leg.strike, leg.side);
     closeModal(); render();
   }]));
 }
@@ -1476,9 +1482,10 @@ function openAdd() {
     const listed = availableStrike(type.control.value, Number(strike.control.value));
     if (listed == null) { showToast('No listed ' + type.control.value + ' contracts are available for this expiration.'); return; }
     strike.control.value = String(listed);
-    premium.control.value = samplePremium(type.control.value, listed).toFixed(2);
+    premium.control.value = samplePremium(type.control.value, listed, Number(side.control.value)).toFixed(2);
   };
-  strike.control.onchange = () => { if (availableStrike(type.control.value, Number(strike.control.value)) != null) premium.control.value = samplePremium(type.control.value, Number(strike.control.value)).toFixed(2); };
+  side.control.onchange = () => { premium.control.value = samplePremium(type.control.value, Number(strike.control.value), Number(side.control.value)).toFixed(2); };
+  strike.control.onchange = () => { if (availableStrike(type.control.value, Number(strike.control.value)) != null) premium.control.value = samplePremium(type.control.value, Number(strike.control.value), Number(side.control.value)).toFixed(2); };
   for (const item of [type, side, strike, qty, premium]) grid.append(item.wrap);
   $('modal-content').append(grid, actions(['Cancel', 'secondary-button', closeModal], ['Add Position', 'primary-button', () => {
     for (const control of [strike.control, qty.control, premium.control]) { control.required = true; if (!control.reportValidity()) return; }
@@ -1493,7 +1500,7 @@ function openPositions(focusLegId = null) {
   const single = typeof focusLegId === 'number' ? focusLegId : null;
   const entries = [];
   modal(single == null ? 'Manage positions' : 'Edit position');
-  $('modal-content').append(node('p', '', 'Set your entry premium per share. One standard contract represents 100 shares. Changes apply when you save.'));
+  $('modal-content').append(node('p', '', 'Set your entry premium per share. Quote estimates use ask for buys and bid for sells; actual fills may differ. Changes apply when you save.'));
   for (const leg of state.legs.filter(leg => single == null || leg.id === single)) {
     const card = node('div', 'position-card' + (leg.excluded ? ' excluded' : ''));
     card.dataset.legId = String(leg.id);
@@ -1517,11 +1524,11 @@ function openPositions(focusLegId = null) {
     toggle.append(included, node('span', '', 'Include in analysis'));
     included.onchange = () => card.classList.toggle('excluded', !included.checked);
     entry.included = included;
-    const reset = node('button', 'text-button', 'Use model premium');
+    const reset = node('button', 'text-button', 'Use suggested premium');
     reset.type = 'button';
     reset.onclick = () => {
       if (!(Number(strike.control.value) > 0)) { strike.control.reportValidity(); return; }
-      premium.control.value = samplePremium(type.control.value, Number(strike.control.value)).toFixed(2);
+      premium.control.value = samplePremium(type.control.value, Number(strike.control.value), Number(side.control.value)).toFixed(2);
       entry.modelPremium = { type: type.control.value, strike: Number(strike.control.value), premium: Number(premium.control.value) };
     };
     const remove = node('button', 'position-remove', 'Remove position'); remove.type = 'button';
@@ -1630,6 +1637,7 @@ function openHistory() {
       state = restored; nextId = Math.max(...state.legs.map(leg => leg.id)) + 1;
       const client = market.client || new YFinanceClient();
       marketRequestVersion++;
+      cancelMarketRequest();
       market = { client, connected: false, quote: null, expirations: [], chain: [], loading: true, error: '' };
       closeModal(); render();
       loadMarketSymbol(client, state.symbol, null, true).then(loaded => { if (loaded) showToast('Trade loaded; saved entry prices preserved.'); }).catch(error => { render(); showToast('Trade loaded; market data unavailable: ' + error.message); });

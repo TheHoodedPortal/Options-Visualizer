@@ -41,3 +41,10 @@ test('price ticks stay whole dollars for a sub-dollar underlying', () => {
   assert.equal(axis.step, 1);
   assert.deepEqual(axis.ticks, [0, 1]);
 });
+
+test('fractional tick intervals keep a penny-stock range readable', () => {
+  const axis = niceTicks(.40, .60, 5);
+  assert.ok(axis.step < 1);
+  assert.ok(axis.ticks[0] <= .40 && axis.ticks.at(-1) >= .60);
+  assert.ok(axis.ticks.at(-1) - axis.ticks[0] < .5);
+});

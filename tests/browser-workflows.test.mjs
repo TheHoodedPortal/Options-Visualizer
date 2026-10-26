@@ -55,13 +55,19 @@ test('browser workflows keep dates, currency, saved trades, and the latest marke
     const chartLabels = el('payoff-chart').textContent;
     assert.match(chartLabels, /\$/);
     assert.doesNotMatch(chartLabels, /CAD/);
+    el('spot-input').value = '125'; el('spot-input').dispatchEvent(new w.Event('change'));
+    el('iv-slider').value = '150'; el('iv-slider').dispatchEvent(new w.Event('input'));
+    el('strategy-select').value = 'short-straddle'; el('strategy-select').dispatchEvent(new w.Event('change'));
+    assert.equal(el('net-value').textContent, '$200'); // Two sales at the $1 bid.
+    el('strategy-select').value = 'long-call'; el('strategy-select').dispatchEvent(new w.Event('change'));
+    assert.equal(el('net-value').textContent, '$200'); // One purchase at the $2 ask.
     click('save-button');
     [...el('modal-content').querySelectorAll('button')].find(button => button.textContent === 'Save Locally').click();
     assert.equal(JSON.parse(w.localStorage.getItem('openstrat-trades')).length, 1);
 
     el('date-slider').value = '7'; el('date-slider').dispatchEvent(new w.Event('input'));
     assert.equal(el('date-label').textContent, 'Nov 7');
-    assert.equal(el('net-value').textContent, '$150');
+    assert.equal(el('net-value').textContent, '$200');
     // The timer advances the stored calendar date only once after midnight.
     now = new RealDate('2026-11-01T00:01:00-04:00').getTime();
     intervals[0]();
@@ -87,7 +93,7 @@ test('browser workflows keep dates, currency, saved trades, and the latest marke
     respond('MSFT', '2026-12-18', {iv: 5}); await flush();
     respond('MSFT', '2026-11-20'); await flush();
     assert.match(el('expiration-dte').textContent, /Dec 18/);
-    assert.equal(el('iv-label').textContent, '500.0%');
+    assert.equal(el('iv-label').textContent, '750.0%');
 
     click('history-button');
     [...el('modal-content').querySelectorAll('button')].find(button => button.textContent === 'Load').click();
@@ -95,8 +101,10 @@ test('browser workflows keep dates, currency, saved trades, and the latest marke
     assert.equal(el('symbol-input').value, 'MU');
     assert.equal(el('spot-currency').textContent, '$');
     assert.match(el('data-status-detail').textContent, /Currency: CAD/);
-    assert.equal(el('net-value').textContent, '$150');
-    assert.equal(el('iv-label').textContent, '350.0%');
+    assert.equal(el('net-value').textContent, '$200');
+    assert.equal(el('iv-label').textContent, '525.0%');
+    assert.equal(el('spot-input').value, '125.00');
+    assert.equal(el('iv-slider').value, '150');
 
     // Starting with calls only must reject puts and prevent invented contracts.
     el('symbol-input').value = 'CALL'; el('symbol-input').dispatchEvent(new w.Event('change'));

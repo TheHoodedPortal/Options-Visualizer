@@ -3,7 +3,8 @@ import { optionDelta, PRICING_MODELS, RATE } from './pricing.js';
 export function contractImpliedVolatility(rawValue, fallback) {
   const raw = Number(rawValue);
   if (!Number.isFinite(raw) || raw <= 0) return fallback;
-  return raw > 3 ? raw / 100 : raw;
+  // Yahoo Finance returns IV as a decimal fraction, including values above 3.
+  return raw;
 }
 
 export function closestStrikeAtDelta({

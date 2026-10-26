@@ -45,9 +45,11 @@ test('maps a contract to the closest listed strike with its target delta', () =>
   assert.equal(closestStrikeAtDelta({ chain, type: 'put', targetDelta, spot: 100, days: 60, iv: .3 }), null);
 });
 
-test('normalizes Yahoo implied volatility values and falls back when missing', () => {
+test('preserves Yahoo decimal implied volatility and falls back when missing', () => {
   assert.equal(contractImpliedVolatility(.42, .3), .42);
-  assert.equal(contractImpliedVolatility(42, .3), .42);
+  assert.equal(contractImpliedVolatility(3.5, .3), 3.5);
+  assert.equal(contractImpliedVolatility(5, .3), 5);
+  assert.equal(contractImpliedVolatility(42, .3), 42);
   assert.equal(contractImpliedVolatility(0, .3), .3);
 });
 
@@ -73,4 +75,10 @@ test('connected chains never invent strikes for a missing option type', () => {
   assert.equal(snapStrikeForDrag(chain, 95, 95, {type:'put'}, []), null);
   assert.equal(snapStrikeForDrag([], 95, 95, {id: 1, type:'put'}, [{id: 2, type:'call', strike:95}], true), null);
   assert.equal(snapStrike([], 95, 95, 'put', false), 95);
+});
+
+test('delta mapping retains extremely high decimal volatility', () => {
+  const chain = [80, 100, 120].map(strike => ({ type: 'call', strike, iv: 3.5 }));
+  const target = optionDelta('call', 100, 120, 60, 3.5, .04, PRICING_MODELS.EUROPEAN);
+  assert.equal(closestStrikeAtDelta({ chain, type: 'call', targetDelta: target, spot: 100, days: 60, iv: .3, model: PRICING_MODELS.EUROPEAN }), 120);
 });

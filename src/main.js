@@ -87,7 +87,7 @@ function safeState(raw) {
   const expiry = validExpiry ? raw.expiry : defaultExpiry;
   return {
     symbol: /^[A-Z0-9.^=-]{1,12}$/.test(String(raw.symbol || '').toUpperCase()) ? String(raw.symbol).toUpperCase() : 'MU', spot: boundedNumber(raw.spot, 100, .01, 1000000),
-    iv: boundedNumber(raw.iv, .35, .01, 3), expiry,
+    iv: boundedNumber(raw.iv, .35, .01, 100), expiry,
     strategy: names[raw.strategy] ? raw.strategy : 'custom', legs,
     day: boundedNumber(raw.day, 0, 0, daysUntil(expiry)),
     range: boundedNumber(raw.range, 15, 5, 50), ivScale: boundedNumber(raw.ivScale, 1, .4, 2),
@@ -381,6 +381,8 @@ function syncContractEditor() {
   };
   panel.querySelector('[data-editor-bid]').textContent = quoteValue('bid');
   panel.querySelector('[data-editor-ask]').textContent = quoteValue('ask');
+  panel.querySelector('[data-editor-iv]').parentElement.title = quote?.iv > 0 ? 'Contract implied volatility, adjusted by the scenario slider.' : 'Scenario volatility; contract implied volatility is unavailable.';
+  panel.querySelector('[data-editor-delta]').parentElement.title = 'Contract delta uses the IV shown here. Portfolio Greeks use the flat scenario IV.';
   panel.querySelector('[data-editor-iv]').textContent = Number.isFinite(iv) ? (iv * 100).toFixed(1) + '%' : '—';
   panel.querySelector('[data-editor-delta]').textContent = Number.isFinite(delta) ? signedGreek(delta, 3) : '—';
   panel.querySelector('[data-editor-include]').checked = !leg.excluded;
@@ -409,7 +411,7 @@ function openContractEditor(legId) {
   panel.append(header);
 
   const quotes = node('div', 'contract-editor-quotes');
-  for (const [key, label] of [['bid', 'Bid'], ['ask', 'Ask'], ['iv', 'IV est.'], ['delta', 'Delta est.']]) {
+  for (const [key, label] of [['bid', 'Bid'], ['ask', 'Ask'], ['iv', 'IV used'], ['delta', 'Contract Δ']]) {
     const cell = node('div', 'contract-editor-quote-cell');
     cell.append(node('span', '', label), node('strong', '', '—'));
     cell.lastChild.dataset['editor' + key[0].toUpperCase() + key.slice(1)] = '';
@@ -783,7 +785,7 @@ function renderGreeks() {
   $('greek-vega').textContent = signedGreekMoney(greeks.vega);
   $('greeks-asof').textContent = state.day === 0 ? 'Now' : state.day === dte ? 'At expiration' : displayDate(iso(dateAfter(state.day)));
   const yieldContext = state.dividendYieldMode === 'manual' ? 'manual' : market.quote?.dividendYieldSource ? 'TTM estimate' : 'estimate unavailable';
-  $('greeks-note').textContent = (state.model === PRICING_MODELS.AMERICAN ? 'Bjerksund–Stensland 2002' : 'Black–Scholes') + ' · 4% risk-free rate · ' + (state.dividendYield * 100).toFixed(2) + '% annual dividend (' + yieldContext + ')';
+  $('greeks-note').textContent = (state.model === PRICING_MODELS.AMERICAN ? 'Bjerksund–Stensland 2002' : 'Black–Scholes') + ' · 4% risk-free rate · ' + (state.dividendYield * 100).toFixed(2) + '% annual dividend (' + yieldContext + ') · flat scenario IV for all positions';
 }
 function renderStrategyPayoffPreview() {
   const preview = $('strategy-payoff-preview');
@@ -1169,7 +1171,7 @@ function render() {
   } else {
     changeLabel.hidden = true;
   }
-  document.querySelector('.data-note').textContent = 'Payoffs are model estimates for the full strategy. Standard contracts represent 100 shares.';
+  document.querySelector('.data-note').textContent = 'Payoffs and portfolio Greeks use the same flat scenario volatility for every position. Standard contracts represent 100 shares.';
   renderExpiration(); renderRuler(); renderStats(); renderControls(); renderVisualization(); syncContractEditor();
 }
 function modal(title) {
@@ -1269,7 +1271,7 @@ async function loadMarketSymbol(client, symbol, deltaTargets = null, preservePos
   if (!preservePositions) state.day = 0;
   else state.day = clamp(state.day, 0, daysUntil(expiry));
   const near = chain.filter(option => option.type === 'call' && option.iv > 0).sort((a, b) => Math.abs(a.strike - state.spot) - Math.abs(b.strike - state.spot))[0];
-  if (near) state.iv = near.iv > 3 ? near.iv / 100 : near.iv;
+  if (near) state.iv = contractImpliedVolatility(near.iv, state.iv);
   const targetsById = new Map((deltaTargets || []).map(target => [target.id, target]));
   for (const leg of state.legs) {
     if (preservePositions) continue;
@@ -1440,7 +1442,7 @@ function openAssumptions() {
   $('modal-content').append(
     node('p', '', 'The selected model estimates option values before expiration. Bjerksund–Stensland 2002 approximates American options, including early exercise. Black–Scholes provides a European-style comparison.'),
     node('p', '', 'Interest rate: fixed at 4% annually. Dividend yield: a trailing Yahoo Finance estimate when available, or your manual assumption. A missing estimate defaults to 0%; it does not confirm that the stock pays no dividend.'),
-    node('p', '', 'The volatility slider adjusts the base implied-volatility estimate for this scenario. Reset returns to today, ±15% chart range, and the base volatility; your contracts and pricing assumptions are preserved.'),
+    node('p', '', 'The chart and portfolio Greeks use one flat volatility for all positions, based on a near-the-money call when available. The slider scales that scenario volatility. The contract editor may use a different, contract-specific IV for its delta. Reset restores the default scenario controls.'),
     actions(['Close', 'primary-button', closeModal])
   );
 }

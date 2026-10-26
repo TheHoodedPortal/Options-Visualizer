@@ -21,13 +21,13 @@ test('uses a sensible stock-price interval when no nearby contracts are present'
 });
 
 test('dragging does not snap to an unlisted opposite-type strike', () => {
-  const chain = [1000, 1010, 1020, 1030, 1040, 1050].map(strike => ({ strike }));
+  const chain = [1000, 1010, 1020, 1030, 1040, 1050].map(strike => ({ type: 'call', strike }));
   const call = { id: 1, type: 'call', strike: 1020 };
   const put = { id: 2, type: 'put', strike: 1045 };
 
   assert.equal(snapStrike(chain, 1029, 1044), 1040);
   assert.equal(snapStrikeForDrag(chain, 1029, 1044, call, [call, put]), 1040);
-  assert.equal(snapStrikeForDrag(chain, 1029, 1035, call, [call, put]), 1040);
+  assert.equal(snapStrikeForDrag(chain, 1029, 1035, call, [call, put]), 1030);
 });
 
 test('maps a contract to the closest listed strike with its target delta', () => {
@@ -63,4 +63,14 @@ test('keyboard movement reaches adjacent strikes across uneven grids', () => {
   assert.equal(adjacentStrike(chain, 95, 100, 'call', -1), 90.5);
   assert.equal(adjacentStrike(chain, 95, 100, 'call', 1), 100);
   assert.equal(adjacentStrike([], 20, 20, 'call', -1), 19.5);
+});
+
+test('connected chains never invent strikes for a missing option type', () => {
+  const chain = [{type: 'call', strike: 92.5}, {type: 'call', strike: 97.5}];
+  assert.equal(snapStrike(chain, 95, 95, 'put'), null);
+  assert.equal(snapStrike([], 95, 95, 'put', true), null);
+  assert.equal(adjacentStrike(chain, 95, 95, 'put', 1), null);
+  assert.equal(snapStrikeForDrag(chain, 95, 95, {type:'put'}, []), null);
+  assert.equal(snapStrikeForDrag([], 95, 95, {id: 1, type:'put'}, [{id: 2, type:'call', strike:95}], true), null);
+  assert.equal(snapStrike([], 95, 95, 'put', false), 95);
 });

@@ -1,5 +1,5 @@
 import { YFinanceClient } from './yfinance.js';
-import { optionPrice, optionDelta, daysUntil, profitLoss, contractValue, outputValue, netDebit, expirationStats, activeLegs, strategyGreeks, MULTIPLIER, PRICING_MODELS, RATE } from './pricing.js';
+import { optionPrice, optionDelta, daysUntil, addCalendarDays, profitLoss, contractValue, outputValue, netDebit, expirationStats, activeLegs, strategyGreeks, MULTIPLIER, PRICING_MODELS, RATE } from './pricing.js';
 import { closestStrikeAtDelta, contractImpliedVolatility } from './contract-mapping.js';
 import { recognizeStrategy } from './strategies.js';
 import { snapStrike, snapStrikeForDrag, adjacentStrike } from './strikes.js';
@@ -14,13 +14,16 @@ const names = {
   'short-strangle': 'Short Strangle', 'iron-condor': 'Iron Condor',
   'long-guts': 'Long Guts', 'long-strangle': 'Long Strangle', custom: 'Custom Strategy'
 };
-const money = (n, decimals = 0) => Number.isFinite(n) ? (market.connected && market.quote?.currency && market.quote.currency !== 'USD' ? market.quote.currency + ' ' : '$') + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals }) : 'Infinite';
+const currency = () => market.connected && market.quote?.currency ? market.quote.currency : null;
+const currencyLabel = () => currency() || 'Currency';
+const currencyPrefix = () => currencyLabel() + ' ';
+const money = (n, decimals = 0) => Number.isFinite(n) ? currencyPrefix() + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals }) : 'Infinite';
 const signed = (n, suffix = '') => Number.isFinite(n) ? (n < 0 ? '−' : '+') + Math.abs(n).toLocaleString('en-US', { maximumFractionDigits: 1 }) + suffix : '—';
 const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
 const today = new Date();
 let startDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
 const iso = date => date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0');
-const dateAfter = days => { const date = new Date(startDate); date.setDate(date.getDate() + days); return date; };
+const dateAfter = days => addCalendarDays(startDate, days);
 const displayDate = date => new Date(date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 const defaultExpiry = today <= new Date('2026-11-13T00:00:00') ? '2026-11-13' : iso(dateAfter(36));
 let market = { client: null, connected: false, quote: null, expirations: [], chain: [], loading: true, error: '' };
@@ -118,7 +121,7 @@ function showToast(message) {
   toastTimer = setTimeout(() => { toast.hidden = true; }, 2800);
 }
 function availableStrike(type, desired) {
-  return snapStrike(market.connected ? market.chain : [], state.spot, desired, type);
+  return snapStrike(market.connected ? market.chain : [], state.spot, desired, type, market.connected);
 }
 function samplePremium(type, strike) {
   if (market.connected) {
@@ -140,6 +143,9 @@ function makeLeg(type, side, strike, qty = 1) {
   return { id: nextId++, type, side, strike, qty, premium: samplePremium(type, strike), manual: false, excluded: false };
 }
 function preset(key) {
+  const needsCall = !['long-put', 'bear-put-spread'].includes(key);
+  const needsPut = !['long-call', 'bull-call-spread'].includes(key);
+  if ((needsCall && availableStrike('call', state.spot) == null) || (needsPut && availableStrike('put', state.spot) == null)) { showToast('This expiration has no listed contracts for the selected strategy.'); $('strategy-select').value = state.strategy; return; }
   const at = Math.round(state.spot / 5) * 5;
   const width = Math.max(5, Math.round(state.spot * .05 / 5) * 5);
   const lower = Math.max(5, at - width);
@@ -249,6 +255,7 @@ function markerText(leg) {
 }
 function quickAddContract(type, side, desiredStrike) {
   const strike = availableStrike(type, desiredStrike);
+  if (strike == null) { showToast('No listed ' + type + ' contracts are available for this expiration.'); return; }
   const existing = state.legs.find(leg => leg.type === type && leg.side === side && leg.strike === strike && !leg.manual && !leg.excluded);
   if (existing && existing.qty >= 100) { showToast('This position already has 100 contracts.'); return; }
   if (!existing && state.legs.length >= 16) { showToast('A strategy can contain up to 16 positions.'); return; }
@@ -280,9 +287,11 @@ function openContractMenu(strike, clientX, clientY, legId = null) {
     button.setAttribute('role', 'menuitem');
     button.dataset.type = type;
     button.dataset.side = side;
-    button.dataset.strike = selectedStrike;
+    button.dataset.strike = selectedStrike ?? '';
+    button.disabled = selectedStrike == null;
+    if (button.disabled) button.title = 'No listed ' + type + ' contracts are available for this expiration.';
     const verb = side === 1 ? 'Buy' : 'Sell';
-    button.append(node('span', '', verb + ' ' + selectedStrike), node('span', 'contract-type ' + type, type === 'call' ? 'Call' : 'Put'));
+    button.append(node('span', '', verb + ' ' + (selectedStrike ?? 'unavailable')), node('span', 'contract-type ' + type, type === 'call' ? 'Call' : 'Put'));
     button.setAttribute('aria-label', verb + ' 1 ' + selectedStrike + ' ' + type + ' expiring ' + displayDate(state.expiry));
     button.onclick = () => quickAddContract(type, side, selectedStrike);
     menu.append(button);
@@ -419,8 +428,10 @@ function openContractEditor(legId) {
         if (!current) return;
         if (property === 'side') current.side = Number(value);
         else if (current.type !== value) {
+          const strike = availableStrike(value, current.strike);
+          if (strike == null) { showToast('No listed ' + value + ' contracts are available for this expiration.'); return; }
           current.type = value;
-          current.strike = availableStrike(value, current.strike);
+          current.strike = strike;
           current.premium = samplePremium(value, current.strike);
           current.manual = false;
         }
@@ -460,7 +471,7 @@ function openContractEditor(legId) {
   const priceField = node('label', 'contract-editor-field');
   priceField.append(node('span', '', 'Entry price / share'));
   const priceWrap = node('span', 'contract-editor-price');
-  priceWrap.append(node('span', '', '$'));
+  priceWrap.append(node('span', '', currencyLabel()));
   const price = node('input');
   price.type = 'number'; price.min = '0'; price.max = '1000000'; price.step = '0.01'; price.inputMode = 'decimal';
   price.setAttribute('aria-label', 'Entry premium per share'); price.dataset.editorPrice = '';
@@ -642,12 +653,14 @@ function renderRuler() {
       const direction = event.key === 'ArrowRight' ? 1 : -1;
       const current = state.legs.find(item => item.id === leg.id);
       if (!current) return;
-      const target = adjacentStrike(market.connected ? market.chain : [], state.spot, current.strike, current.type, direction);
+      const target = adjacentStrike(market.connected ? market.chain : [], state.spot, current.strike, current.type, direction, market.connected);
+      if (target == null) { showToast('No listed ' + current.type + ' contracts are available for this expiration.'); return; }
       if (target === current.strike) return;
       const delta = target - current.strike;
       for (const item of state.legs) {
         if (item.id !== current.id && !event.shiftKey) continue;
         const desired = item.id === current.id ? target : availableStrike(item.type, Math.max(1, item.strike + delta));
+        if (desired == null) { showToast('No listed ' + item.type + ' contracts are available for this expiration.'); continue; }
         item.strike = desired;
         item.manual = false;
         item.premium = samplePremium(item.type, desired);
@@ -688,12 +701,13 @@ document.addEventListener('pointermove', event => {
   const raw = drag.bounds.min + clamp((event.clientX - rect.left) / rect.width, 0, 1) * (drag.bounds.max - drag.bounds.min);
   const selected = state.legs.find(item => item.id === drag.id);
   if (!selected) return;
-  const target = snapStrikeForDrag(market.chain, state.spot, raw, selected, state.legs);
+  const target = snapStrikeForDrag(market.connected ? market.chain : [], state.spot, raw, selected, state.legs, market.connected);
+  if (target == null) return;
   const delta = target - drag.startStrikes.get(selected.id);
   let changed = false;
   for (const leg of state.legs) {
     const desired = leg.id === selected.id ? target : event.shiftKey ? availableStrike(leg.type, drag.startStrikes.get(leg.id) + delta) : drag.startStrikes.get(leg.id);
-    if (leg.strike === desired) continue;
+    if (desired == null || leg.strike === desired) continue;
     leg.strike = desired;
     leg.manual = false;
     leg.premium = samplePremium(leg.type, desired);
@@ -854,7 +868,7 @@ function axisText(value, step = 1) {
     return sign + Math.abs(value).toFixed(percentDecimals) + '%';
   }
   if (window.innerWidth < 600 && Math.abs(value) >= 1000) {
-    return sign + (market.connected && market.quote?.currency && market.quote.currency !== 'USD' ? market.quote.currency + ' ' : '$') + new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(Math.abs(value)).toLowerCase();
+    return sign + currencyPrefix() + new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(Math.abs(value)).toLowerCase();
   }
   return sign + money(Math.abs(value), decimals);
 }
@@ -1109,6 +1123,7 @@ function renderDataStatus() {
     if (adjusted) parts.push(node('span', '', 'Custom underlying price'));
     parts.push(node('span', 'quote-freshness', 'Delayed'));
     parts.push(node('span', '', asOf ? 'Quote as of ' + asOf : 'Quote time unavailable'));
+    if (state.legs.some(leg => !market.chain.some(option => option.type === leg.type && Math.abs(option.strike - leg.strike) < .001))) parts.push(node('span', '', 'Some saved positions are not listed in the current chain'));
     if (market.error) parts.push(node('span', '', 'Refresh unavailable'));
     else if (market.loading) parts.push(node('span', '', 'Refreshing…'));
     detail.replaceChildren(...parts.flatMap((part, index) => index ? [document.createTextNode(' · '), part] : [part]));
@@ -1132,6 +1147,9 @@ function render() {
     state.day = clamp(state.day, 0, daysUntil(state.expiry));
   }
   closeContractMenu(false);
+  $('spot-currency').textContent = currencyLabel();
+  $('output-pl').textContent = 'Profit / loss ' + currencyLabel();
+  $('gamma-unit').textContent = 'shares / 1 ' + currencyLabel();
   $('symbol-input').value = state.symbol;
   if (document.activeElement !== $('spot-input')) $('spot-input').value = state.spot.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   $('strategy-select').value = state.strategy;
@@ -1225,6 +1243,7 @@ async function loadMarketSymbol(client, symbol, deltaTargets = null, preservePos
     if (!expiry) expiry = dates.includes(state.expiry) ? state.expiry : dates.find(date => daysUntil(date) > 0) || dates[0];
     if (!chain) chain = await client.chain(symbol, expiry);
     if (!chain.length) throw new Error('No standard 100-share options were returned for this expiration.');
+    if (!preservePositions && state.legs.some(leg => !chain.some(option => option.type === leg.type))) throw new Error('No listed contracts are available for a position type in this expiration.');
     if (preservePositions && expiry !== state.expiry) throw new Error('The saved expiration is no longer listed. Saved positions remain unchanged.');
   } catch (error) {
     if (version !== marketRequestVersion) return false;
@@ -1365,6 +1384,7 @@ async function loadMarketExpiry(value) {
     const chain = await client.chain(symbol, value);
     if (version !== marketRequestVersion || state.symbol !== symbol || market.client !== client) return;
     if (!chain.length) throw new Error('No standard options returned for that expiration.');
+    if (state.legs.some(leg => !chain.some(option => option.type === leg.type))) throw new Error('No listed contracts are available for a position type in that expiration.');
     market.chain = chain;
     market.loading = false;
     state.expiry = value;
@@ -1439,16 +1459,23 @@ function openAdd() {
   const grid = node('div', 'form-grid');
   const type = field('Option type', 'call', 'select', [['call', 'Call'], ['put', 'Put']]);
   const side = field('Side', '1', 'select', [['1', 'Buy (long)'], ['-1', 'Sell (short)']]);
-  const strike = field('Strike price ($)', Math.round(state.spot / 5) * 5, 'number');
+  const initialStrike = availableStrike('call', state.spot);
+  const strike = field('Strike price (' + currencyLabel() + ')', initialStrike ?? state.spot, 'number');
   const qty = field('Contracts', 1, 'number');
-  const premium = field('Entry premium ($ / share)', samplePremium('call', Number(strike.control.value)).toFixed(2), 'number');
+  const premium = field('Entry premium (' + currencyLabel() + ' / share)' , samplePremium('call', Number(strike.control.value)).toFixed(2), 'number');
   strike.control.min = '.01'; strike.control.max = '1000000'; premium.control.max = '1000000'; qty.control.min = '1'; qty.control.max = '100'; qty.control.step = '1';
-  type.control.onchange = () => { premium.control.value = samplePremium(type.control.value, Number(strike.control.value)).toFixed(2); };
-  strike.control.onchange = () => { premium.control.value = samplePremium(type.control.value, Number(strike.control.value)).toFixed(2); };
+  type.control.onchange = () => {
+    const listed = availableStrike(type.control.value, Number(strike.control.value));
+    if (listed == null) { showToast('No listed ' + type.control.value + ' contracts are available for this expiration.'); return; }
+    strike.control.value = String(listed);
+    premium.control.value = samplePremium(type.control.value, listed).toFixed(2);
+  };
+  strike.control.onchange = () => { if (availableStrike(type.control.value, Number(strike.control.value)) != null) premium.control.value = samplePremium(type.control.value, Number(strike.control.value)).toFixed(2); };
   for (const item of [type, side, strike, qty, premium]) grid.append(item.wrap);
   $('modal-content').append(grid, actions(['Cancel', 'secondary-button', closeModal], ['Add Position', 'primary-button', () => {
     for (const control of [strike.control, qty.control, premium.control]) { control.required = true; if (!control.reportValidity()) return; }
     const k = Number(strike.control.value), q = Number(qty.control.value), p = Number(premium.control.value);
+    if (market.connected && !market.chain.some(option => option.type === type.control.value && Math.abs(option.strike - k) < .001)) { showToast('Choose a listed strike for this option type.'); return; }
     if (!(k > 0 && q > 0 && p >= 0)) { showToast('Enter a valid strike, quantity, and premium.'); return; }
     state.legs.push({ id: nextId++, type: type.control.value, side: Number(side.control.value), strike: k, qty: q, premium: p, manual: true, excluded: false });
     classifyStrategy(); closeModal(); render(); showToast('Position added.');
@@ -1468,9 +1495,9 @@ function openPositions(focusLegId = null) {
     const grid = node('div', 'form-grid');
     const type = field('Option type', leg.type, 'select', [['call', 'Call'], ['put', 'Put']]);
     const side = field('Side', leg.side, 'select', [['1', 'Buy (long)'], ['-1', 'Sell (short)']]);
-    const strike = field('Strike price ($)', leg.strike, 'number');
+    const strike = field('Strike price (' + currencyLabel() + ')' , leg.strike, 'number');
     const qty = field('Contracts', leg.qty, 'number');
-    const premium = field('Entry premium ($ / share)', leg.premium.toFixed(2), 'number');
+    const premium = field('Entry premium (' + currencyLabel() + ' / share)' , leg.premium.toFixed(2), 'number');
     strike.control.min = '.01'; strike.control.max = '1000000'; premium.control.max = '1000000'; qty.control.min = '1'; qty.control.max = '100'; qty.control.step = '1'; premium.control.min = '0';
     for (const item of [type, side, strike, qty, premium]) grid.append(item.wrap);
     card.append(grid);
@@ -1512,6 +1539,7 @@ function openPositions(focusLegId = null) {
         if (!control.reportValidity()) return;
       }
       const k = Number(strike.control.value), q = Number(qty.control.value), p = Number(premium.control.value);
+      if (market.connected && (type.control.value !== leg.type || k !== leg.strike) && !market.chain.some(option => option.type === type.control.value && Math.abs(option.strike - k) < .001)) { showToast('Choose a listed strike for this option type.'); return; }
       const model = entry.modelPremium;
       const usesModel = model && model.type === type.control.value && model.strike === k && model.premium === p;
       const priceChanged = type.control.value !== leg.type || k !== leg.strike || p !== leg.premium;

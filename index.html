@@ -33,7 +33,7 @@
           </div>
           <div class="quote-row">
             <div class="symbol-combobox"><input id="symbol-input" class="symbol-field" type="text" role="combobox" aria-label="Ticker symbol" aria-autocomplete="list" aria-expanded="false" aria-controls="ticker-suggestions" autocomplete="off" spellcheck="false" maxlength="12" value="MU"><div id="ticker-suggestions" class="symbol-suggestions" role="listbox" aria-label="Popular ticker suggestions" hidden></div></div>
-            <div class="price-stack"><label class="spot-field">$<input id="spot-input" type="text" inputmode="decimal" aria-label="Editable underlying price" title="Edit the underlying price" value="1,047.60" autocomplete="off" spellcheck="false"></label><span class="quote-change">−3.71%<small>−$40.40</small></span></div>
+            <div class="price-stack"><label class="spot-field"><span id="spot-currency">Currency</span><input id="spot-input" type="text" inputmode="decimal" aria-label="Editable underlying price" title="Edit the underlying price" value="1,047.60" autocomplete="off" spellcheck="false"></label><span class="quote-change">−3.71%<small>−$40.40</small></span></div>
             <button id="data-button" class="demo-pill" type="button" title="Yahoo Finance data status">◌ Connecting Yahoo…</button>
           </div>
           <p id="data-status-detail" class="data-status-detail">Sample values shown while Yahoo Finance connects.</p>
@@ -83,7 +83,7 @@
             </div>
             <div class="bottom-toolbar">
               <div class="segmented output-tabs" aria-label="Chart output">
-                <button data-output="pl" class="selected" type="button">Profit / loss $</button>
+                <button id="output-pl" data-output="pl" class="selected" type="button">Profit / loss $</button>
                 <button data-output="percent" type="button">Profit / loss %</button>
                 <button data-output="value" type="button">Contract value</button>
                 <button data-output="risk" type="button">% of max risk</button>
@@ -109,7 +109,7 @@
                 <div class="greeks-content">
                   <div class="greeks-grid">
                     <div><span class="greek-name"><span aria-hidden="true">Δ</span> Delta</span><strong><span id="greek-delta">+0.0</span><small>shares</small></strong></div>
-                    <div><span class="greek-name"><span aria-hidden="true">Γ</span> Gamma</span><strong><span id="greek-gamma">+0.000</span><small>shares / $1</small></strong></div>
+                    <div><span class="greek-name"><span aria-hidden="true">Γ</span> Gamma</span><strong><span id="greek-gamma">+0.000</span><small id="gamma-unit">shares / 1 currency unit</small></strong></div>
                     <div><span class="greek-name"><span aria-hidden="true">Θ</span> Theta</span><strong><span id="greek-theta">−$0.00</span><small>/ day</small></strong></div>
                     <div><span class="greek-name"><span aria-hidden="true">V</span> Vega</span><strong><span id="greek-vega">+$0.00</span><small>/ 1% IV</small></strong></div>
                   </div>

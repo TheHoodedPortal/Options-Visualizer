@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { bivariateNormalCdf, daysUntil, expirationStats, intrinsic, netDebit, optionDelta, optionGreeks, optionPrice, profitLoss, PRICING_MODELS, strategyGreeks } from '../src/pricing.js';
+import { addCalendarDays, bivariateNormalCdf, daysUntil, expirationStats, intrinsic, netDebit, optionDelta, optionGreeks, optionPrice, profitLoss, PRICING_MODELS, strategyGreeks } from '../src/pricing.js';
 
 const expiry = new Date(new Date().getFullYear() + 1, 10, 13).toLocaleDateString('en-CA');
 const call = { symbol: 'MU', spot: 1047.6, iv: .465, expiry, legs: [{ type: 'call', side: 1, strike: 1050, qty: 1, premium: 62 }] };
@@ -132,4 +132,18 @@ test('zero net premium has no defined percentage return', async () => {
   const { outputValue } = await import('../src/pricing.js');
   const state = { spot: 100, iv: .3, expiry: '2099-01-01', legs: [{type:'call', side:1, qty:1, strike:100, premium:0}] };
   assert.ok(Number.isNaN(outputValue(state, 110, 0, 'percent')));
+});
+
+test('calendar days and expiration DTE cross spring and fall daylight saving changes', () => {
+  const oldTZ = process.env.TZ;
+  process.env.TZ = 'America/Toronto';
+  try {
+    for (const [start, days, expected] of [['2026-10-26', 7, '2026-11-02'], ['2027-03-07', 7, '2027-03-14']]) {
+      const date = new Date(start + 'T00:00:00');
+      const result = addCalendarDays(date, days);
+      const local = result.getFullYear() + '-' + String(result.getMonth() + 1).padStart(2, '0') + '-' + String(result.getDate()).padStart(2, '0');
+      assert.equal(local, expected);
+      assert.equal(daysUntil(expected, date), days);
+    }
+  } finally { if (oldTZ === undefined) delete process.env.TZ; else process.env.TZ = oldTZ; }
 });

@@ -37,7 +37,7 @@ Quotes and option chains use Yahoo Finance through yfinance and may be delayed, 
 
 Requires Node.js 20.11+ and Python 3.10+. Install Python dependencies with `py -3 -m pip install -r requirements.txt`, then start with `node server.mjs` and open <http://127.0.0.1:5173>.
 
-Run tests with `node --test` and `py -3 tests/yfinance_worker_test.py`.
+Install the JavaScript test dependencies with `npm ci`, then run `npm test` and `py -3 tests/yfinance_worker_test.py`.
 
 ## License
 

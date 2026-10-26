@@ -31,6 +31,9 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Install JavaScript test dependencies
+        run: npm ci
+
       - name: Run JavaScript tests
         run: node --test
 

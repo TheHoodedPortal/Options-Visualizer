@@ -232,6 +232,12 @@ export function strategyGreeks(state, daysForward = 0, ivMultiplier = 1) {
   return greeks;
 }
 
+export function addCalendarDays(start, days) {
+  const date = new Date(start);
+  date.setDate(date.getDate() + days);
+  return date;
+}
+
 export function daysUntil(dateString, today = new Date()) {
   const date = new Date(dateString + 'T00:00:00');
   const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());

@@ -1,5 +1,6 @@
 import { createServer } from 'node:http';
 import { RequestQueue } from './src/request-queue.js';
+import { isRateLimit } from './src/server-errors.js';
 import { spawn, spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { existsSync } from 'node:fs';
@@ -49,7 +50,7 @@ class YFinanceWorker {
       child.stdin.on('error', () => {});
       const lines = createInterface({ input: child.stdout });
       let stderr = '';
-      const timer = setTimeout(() => fail(new Error('The local yfinance worker did not start in time.')), 8000);
+      const timer = setTimeout(() => fail(new Error('The local yfinance worker did not start in time.')), 25000);
 
       const fail = error => {
         if (settled) return;
@@ -84,8 +85,9 @@ class YFinanceWorker {
         if (!pending) return;
         this.pending.delete(message.id);
         clearTimeout(pending.timer);
+        pending.cleanup();
         if (message.ok) pending.resolve(message.data);
-        else pending.reject(new Error(message.error || 'yfinance could not load market data.'));
+        else pending.reject(Object.assign(new Error(message.error || 'yfinance could not load market data.'), { code: message.code }));
       });
 
       child.stderr.setEncoding('utf8');
@@ -103,15 +105,17 @@ class YFinanceWorker {
         this.ready = false;
         this.child = null;
         this.starting = null;
-        for (const request of this.pending.values()) { clearTimeout(request.timer); request.reject(error); }
+        for (const request of this.pending.values()) { clearTimeout(request.timer); request.cleanup(); request.reject(error); }
         this.pending.clear();
       });
     });
     return this.starting;
   }
 
-  async request(symbol, expiration) {
+  async request(symbol, expiration, signal, forceRefresh = false) {
+    if (signal?.aborted) throw new Error('Request canceled.');
     await this.start();
+    if (signal?.aborted) throw new Error('Request canceled.');
     if (!this.child || !this.ready) throw new Error('The local yfinance worker is not running.');
     const id = ++this.nextId;
     const child = this.child;
@@ -120,16 +124,27 @@ class YFinanceWorker {
         if (this.child !== child) return;
         const error = new Error('The local yfinance worker request timed out.');
         this.ready = false; this.child = null; this.starting = null;
-        for (const request of this.pending.values()) { clearTimeout(request.timer); request.reject(error); }
+        for (const request of this.pending.values()) { clearTimeout(request.timer); request.cleanup(); request.reject(error); }
         this.pending.clear();
         child.kill();
       }, 40_000);
-      this.pending.set(id, { resolve: resolveResult, reject: rejectResult, timer });
+      const cancel = () => {
+        if (this.child !== child) return;
+        const error = new Error('Request canceled.');
+        this.ready = false; this.child = null; this.starting = null;
+        for (const request of this.pending.values()) { clearTimeout(request.timer); request.cleanup(); request.reject(error); }
+        this.pending.clear(); child.kill();
+      };
+      const cleanup = () => signal?.removeEventListener('abort', cancel);
+      this.pending.set(id, { resolve: resolveResult, reject: rejectResult, timer, cleanup });
+      signal?.addEventListener('abort', cancel, { once: true });
+      if (signal?.aborted) cancel();
     });
-    this.child.stdin.write(JSON.stringify({ id, symbol, expiration }) + '\n', error => {
+    if (!this.pending.has(id)) return promise;
+    child.stdin.write(JSON.stringify({ id, symbol, expiration, forceRefresh }) + '\n', error => {
       if (error) {
         const pending = this.pending.get(id);
-        if (pending) { clearTimeout(pending.timer); pending.reject(error); this.pending.delete(id); }
+        if (pending) { clearTimeout(pending.timer); pending.cleanup(); pending.reject(error); this.pending.delete(id); }
       }
     });
     return promise;
@@ -154,10 +169,6 @@ function cacheKey(symbol, expiration) {
   return symbol + ':' + (expiration || 'nearest');
 }
 
-function isRateLimit(error) {
-  return /429|rate.?limit|too many requests/i.test(String(error?.message || error));
-}
-
 function isConnectionFailure(error) {
   return /curl:\s*\((7|28|35|56)\)|could not connect|failed to connect|connection timed out|connection reset/i.test(String(error?.message || error));
 }
@@ -172,30 +183,32 @@ function connectionPauseMessage() {
   return 'Yahoo Finance could not be reached. Requests are paused for ' + seconds + ' seconds; wait before trying again.';
 }
 
-async function marketData(symbol, expiration, signal) {
+async function marketData(symbol, expiration, signal, forceRefresh = false) {
   if (signal?.aborted) throw new Error('Request canceled.');
   const key = cacheKey(symbol, expiration);
+  const pendingKey = forceRefresh ? key + ':refresh' : key;
   const cached = marketCache.get(key);
-  if (cached && cached.expiresAt > Date.now()) return cached.data;
-  if (marketPending.has(key)) return waitForMarket(marketPending.get(key), signal);
+  if (!forceRefresh && cached && cached.expiresAt > Date.now()) return cached.data;
+  if (marketPending.has(pendingKey)) return waitForMarket(marketPending.get(pendingKey), signal);
   if (rateLimitUntil > Date.now()) throw Object.assign(new Error(rateLimitMessage()), { statusCode: 429 });
   if (connectionPauseUntil > Date.now()) throw Object.assign(new Error(connectionPauseMessage()), { statusCode: 503 });
 
   const controller = new AbortController();
-  const entry = { controller, key, clients: 0, settled: false };
+  const entry = { controller, key: pendingKey, clients: 0, settled: false };
   const pending = marketQueue.enqueue(async () => {
     if (rateLimitUntil > Date.now()) throw Object.assign(new Error(rateLimitMessage()), { statusCode: 429 });
     if (connectionPauseUntil > Date.now()) throw Object.assign(new Error(connectionPauseMessage()), { statusCode: 503 });
 
     try {
-      const data = await worker.request(symbol, expiration);
+      const data = await worker.request(symbol, expiration, controller.signal, forceRefresh);
       rateLimitUntil = 0;
       nextRateLimitCooldownMs = 5 * 60_000;
       connectionPauseUntil = 0;
       nextConnectionPauseMs = 30_000;
-      const entry = { data, expiresAt: Date.now() + cacheTtlMs };
-      if (!expiration || data.selectedExpiration === expiration) marketCache.set(key, entry);
-      if (!expiration && data.selectedExpiration) marketCache.set(cacheKey(symbol, data.selectedExpiration), entry);
+      if (forceRefresh) for (const cachedKey of marketCache.keys()) if (cachedKey.startsWith(symbol + ':')) marketCache.delete(cachedKey);
+      const cacheEntry = { data, expiresAt: Date.now() + cacheTtlMs };
+      marketCache.set(key, cacheEntry);
+      if (!expiration && data.selectedExpiration) marketCache.set(cacheKey(symbol, data.selectedExpiration), cacheEntry);
       while (marketCache.size > 100) marketCache.delete(marketCache.keys().next().value);
       return data;
     } catch (error) {
@@ -213,8 +226,8 @@ async function marketData(symbol, expiration, signal) {
     }
   }, controller.signal);
 
-  entry.promise = pending.finally(() => { entry.settled = true; if (marketPending.get(key) === entry) marketPending.delete(key); });
-  marketPending.set(key, entry);
+  entry.promise = pending.finally(() => { entry.settled = true; if (marketPending.get(pendingKey) === entry) marketPending.delete(pendingKey); });
+  marketPending.set(pendingKey, entry);
   return waitForMarket(entry, signal);
 }
 
@@ -262,6 +275,10 @@ const server = createServer(async (request, response) => {
     }
 
     if (pathname === '/api/yfinance') {
+      const origin = request.headers.origin;
+      if (request.headers['sec-fetch-site'] === 'cross-site' || (origin && origin !== 'http://' + request.headers.host)) {
+        sendJson(response, 403, { error: 'Cross-site requests are not allowed.' }); return;
+      }
       if (request.method !== 'GET') {
         sendJson(response, 405, { error: 'Only GET requests are supported.' });
         return;
@@ -279,7 +296,7 @@ const server = createServer(async (request, response) => {
       const controller = new AbortController();
       response.once('close', () => { if (!response.writableEnded) controller.abort(); });
       try {
-        const data = await marketData(symbol, expiration, controller.signal);
+        const data = await marketData(symbol, expiration, controller.signal, requestUrl.searchParams.get('refresh') === '1');
         if (!controller.signal.aborted) sendJson(response, 200, data);
       } catch (error) {
         const status = error.statusCode || (/Python 3|yfinance package|Python interpreter|local yfinance worker/i.test(error.message) ? 503 : 502);

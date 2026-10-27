@@ -1,5 +1,5 @@
 export class RequestQueue {
-  constructor({ gapMs = 5000, maxQueued = 8, maxWaitMs = 15000 } = {}) {
+  constructor({ gapMs = 5000, maxQueued = 2, maxWaitMs = 15000 } = {}) {
     this.gapMs = gapMs; this.maxQueued = maxQueued; this.maxWaitMs = maxWaitMs;
     this.items = []; this.running = false; this.lastStarted = 0; this.timer = null;
   }

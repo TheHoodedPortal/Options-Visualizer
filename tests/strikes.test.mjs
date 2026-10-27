@@ -51,6 +51,8 @@ test('preserves Yahoo decimal implied volatility and falls back when missing', (
   assert.equal(contractImpliedVolatility(5, .3), 5);
   assert.equal(contractImpliedVolatility(42, .3), 42);
   assert.equal(contractImpliedVolatility(0, .3), .3);
+  assert.equal(contractImpliedVolatility(.00001, .3), .3);
+  assert.equal(contractImpliedVolatility(.001, .3), .001);
 });
 
 test('snaps to actual strikes for the requested option type', () => {

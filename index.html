@@ -64,7 +64,7 @@
               <div class="analysis-model-controls" aria-label="Pricing assumptions">
                 <div class="assumptions-caption"><span>Pricing assumptions</span><button id="assumptions-help" class="text-button" type="button" aria-label="Explain pricing assumptions and the fixed 4% interest rate">4% rate <span aria-hidden="true">ⓘ</span></button></div>
                 <label class="model-select-field" for="model-select"><span>Model</span><select id="model-select" title="Choose how option values are estimated"><option value="bjerksund-stensland">Bjerksund–Stensland 2002</option><option value="black-scholes">Black–Scholes</option></select></label>
-                <div class="yield-field"><span class="yield-field-title"><label for="dividend-yield">Dividend yield</label><span class="yield-source-actions"><small id="dividend-yield-source">NO DATA</small><button id="yield-auto" class="yield-reset" type="button" hidden title="Use Yahoo Finance's trailing estimate">Auto</button></span></span><span class="yield-input-wrap"><input id="dividend-yield" type="number" min="0" max="25" step="0.01" value="0.00" inputmode="decimal" aria-label="Annual dividend-yield assumption; Yahoo Finance's trailing estimate can be overridden" title="Yahoo Finance's trailing annual dividend-yield estimate. Edit to override."><span>%</span></span></div>
+                <div class="yield-field"><span class="yield-field-title"><label for="dividend-yield">Dividend yield</label><span class="yield-source-actions"><small id="dividend-yield-source">NO DATA</small><button id="yield-auto" class="yield-reset" type="button" hidden title="Use Yahoo Finance's trailing estimate">Auto</button></span></span><span class="yield-input-wrap"><input id="dividend-yield" type="number" min="0" max="1000" step="0.01" value="0.00" inputmode="decimal" aria-label="Annual dividend-yield assumption; Yahoo Finance's trailing estimate can be overridden" title="Yahoo Finance's trailing annual dividend-yield estimate. Edit to override."><span>%</span></span></div>
               </div>
             </div>
             <div class="visualization">
@@ -78,7 +78,7 @@
               <div class="date-control"><div class="control-label"><strong>Scenario date <span id="date-label">Now</span></strong><div class="scenario-actions"><span id="remaining-label">36d to expiration</span><button id="reset-scenario" class="text-button" type="button" title="Reset scenario date to today, chart range to ±15%, and volatility to its base estimate" disabled>Reset</button></div></div><input id="date-slider" type="range" min="0" max="36" value="0" aria-label="Days forward"></div>
               <div class="lower-controls">
                 <div class="slider-control"><label for="range-slider">Chart range <strong id="range-label">±15%</strong></label><input id="range-slider" type="range" min="5" max="50" value="15"></div>
-                <div class="slider-control"><label for="iv-slider">Implied volatility <strong id="iv-label">46.5%</strong></label><input id="iv-slider" type="range" min="40" max="200" value="100"><div class="iv-scale"><span>½×</span><span>1×</span><span>2×</span></div></div>
+                <div class="slider-control"><label for="iv-slider">Implied volatility <strong id="iv-label">46.5%</strong></label><input id="iv-slider" type="range" min="40" max="200" value="100"><div class="iv-scale"><span>0.4×</span><span>1×</span><span>2×</span></div></div>
               </div>
             </div>
             <div class="bottom-toolbar">

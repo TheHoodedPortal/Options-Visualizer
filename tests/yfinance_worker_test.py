@@ -4,7 +4,7 @@ import sys
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
-from yfinance_worker import market_snapshot
+from yfinance_worker import market_snapshot, error_code
 
 
 class Frame:
@@ -141,6 +141,29 @@ class YFinanceWorkerTests(unittest.TestCase):
     def test_rejects_all_expired_contracts(self):
         with self.assertRaisesRegex(ValueError, "no current option expirations"):
             market_snapshot(FakeYFinance(), {}, "MU", today=datetime.date(2027, 1, 1))
+
+    def test_rate_limit_error_class_is_structured(self):
+        class YFRateLimitError(Exception):
+            pass
+        self.assertEqual(error_code(YFRateLimitError("blocked")), "rate_limited")
+        self.assertIsNone(error_code(ValueError("line 1429")))
+
+    def test_ambiguous_dividend_yield_is_not_assumed_to_be_fraction(self):
+        class OptionSetWithYield(OptionSet):
+            underlying = {"regularMarketPrice": 100, "dividendYield": 40}
+        class YieldTicker(FakeTicker):
+            def option_chain(self, expiration=None): return OptionSetWithYield()
+        class YieldFinance(FakeYFinance):
+            def Ticker(self, symbol): return YieldTicker()
+        result = market_snapshot(YieldFinance(), {}, "ABC", today=datetime.date(2026, 10, 10))
+        self.assertIsNone(result["quote"]["dividendYield"])
+
+    def test_force_refresh_reloads_nearest_chain(self):
+        yf = FakeYFinance()
+        cache = {}
+        market_snapshot(yf, cache, "MU", today=datetime.date(2026, 10, 10))
+        market_snapshot(yf, cache, "MU", today=datetime.date(2026, 10, 10), force_refresh=True)
+        self.assertEqual(yf.tickers[0][1].requested_expirations, ["nearest", "nearest"])
 
     def test_uses_trailing_dividend_rate_when_yield_is_missing(self):
         class RateOnlyOptionSet(OptionSet):

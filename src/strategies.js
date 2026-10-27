@@ -52,3 +52,39 @@ export function recognizeStrategy(legs) {
   }
   return 'custom';
 }
+
+// Find the closest ordered set of actual contracts for a multi-leg preset.
+export function alignPresetStrikes(strategy, legs, chain) {
+  const order = { 'bull-call-spread': [0, 1], 'bear-put-spread': [1, 0],
+    'long-guts': [0, 1], 'long-strangle': [0, 1], 'short-strangle': [0, 1],
+    'iron-condor': [0, 1, 2, 3] }[strategy];
+  const values = type => [...new Set(chain.filter(option => option.type === type)
+    .map(option => Number(option.strike)).filter(value => Number.isFinite(value) && value > 0))].sort((a, b) => a - b);
+  if (strategy === 'straddle' || strategy === 'short-straddle') {
+    const puts = new Set(values('put'));
+    const common = values('call').filter(strike => puts.has(strike));
+    if (!common.length) return null;
+    const strike = common.reduce((best, n) => Math.abs(n - legs[0].strike) < Math.abs(best - legs[0].strike) ? n : best);
+    return [strike, strike];
+  }
+  if (!order) return null;
+  let previous = [];
+  for (let step = 0; step < order.length; step++) {
+    const index = order[step];
+    const current = [];
+    let p = 0, best = null;
+    for (const strike of values(legs[index].type)) {
+      while (p < previous.length && previous[p].strike < strike) {
+        if (!best || previous[p].score < best.score) best = previous[p];
+        p++;
+      }
+      if (step && !best) continue;
+      const path = best ? [...best.path] : [];
+      path[index] = strike;
+      current.push({ strike, path, score: (best?.score || 0) + Math.abs(strike - legs[index].strike) });
+    }
+    if (!current.length) return null;
+    previous = current;
+  }
+  return previous.reduce((best, item) => item.score < best.score ? item : best).path;
+}

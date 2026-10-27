@@ -1,10 +1,10 @@
 import { YFinanceClient } from './yfinance.js';
 import { optionPrice, optionDelta, daysUntil, addCalendarDays, profitLoss, contractValue, outputValue, netDebit, expirationStats, activeLegs, strategyGreeks, MULTIPLIER, PRICING_MODELS, RATE } from './pricing.js';
 import { closestStrikeAtDelta, contractImpliedVolatility } from './contract-mapping.js';
-import { recognizeStrategy } from './strategies.js';
+import { recognizeStrategy, alignPresetStrikes } from './strategies.js';
 import { snapStrike, snapStrikeForDrag, adjacentStrike } from './strikes.js';
 import { getTickerSuggestions } from './tickers.js';
-import { niceTicks, wholeDollarTicks } from './chart-scale.js';
+import { niceTicks, wholeDollarTicks, chartPadding } from './chart-scale.js';
 
 const $ = id => document.getElementById(id);
 const svgNS = 'http://www.w3.org/2000/svg';
@@ -14,7 +14,7 @@ const names = {
   'short-strangle': 'Short Strangle', 'iron-condor': 'Iron Condor',
   'long-guts': 'Long Guts', 'long-strangle': 'Long Strangle', custom: 'Custom Strategy'
 };
-const currency = () => market.connected && market.quote?.currency ? market.quote.currency : null;
+const currency = () => (market.connected && market.quote?.currency) || state.currency || null;
 const currencyLabel = () => {
   const code = currency();
   if (!code) return '$'; // Illustrative values when no quote currency is available.
@@ -88,6 +88,7 @@ function safeState(raw) {
   const validExpiry = /^\d{4}-\d{2}-\d{2}$/.test(raw.expiry) && Number.isFinite(expiryDate.getTime()) && iso(expiryDate) === raw.expiry && Math.abs(expiryDate - startDate) <= 3660 * 86400000;
   const expiry = validExpiry ? raw.expiry : defaultExpiry;
   return {
+    currency: /^[A-Z]{3}$/.test(raw.currency || '') ? raw.currency : null,
     symbol: /^[A-Z0-9.^=-]{1,12}$/.test(String(raw.symbol || '').toUpperCase()) ? String(raw.symbol).toUpperCase() : 'MU', spot: boundedNumber(raw.spot, 100, .01, 1000000),
     iv: boundedNumber(raw.iv, .35, .01, 100), expiry,
     strategy: names[raw.strategy] ? raw.strategy : 'custom', legs,
@@ -95,7 +96,7 @@ function safeState(raw) {
     range: boundedNumber(raw.range, 15, 5, 50), ivScale: boundedNumber(raw.ivScale, 1, .4, 2),
     output: ['pl', 'percent', 'value', 'risk'].includes(raw.output) ? raw.output : 'pl',
     model: [PRICING_MODELS.AMERICAN, PRICING_MODELS.EUROPEAN].includes(raw.model) ? raw.model : PRICING_MODELS.AMERICAN,
-    dividendYield: boundedNumber(raw.dividendYield, 0, 0, .25),
+    dividendYield: boundedNumber(raw.dividendYield, 0, 0, 10),
     dividendYieldMode: raw.dividendYieldMode === 'manual' ? 'manual' : 'auto'
   };
 }
@@ -159,17 +160,28 @@ function preset(key) {
   const upper = at + width;
   const farLower = Math.max(5, lower - width);
   const farUpper = upper + width;
+  let candidate;
+  if (key === 'long-call') candidate = [makeLeg('call', 1, at)];
+  if (key === 'long-put') candidate = [makeLeg('put', 1, at)];
+  if (key === 'bull-call-spread') candidate = [makeLeg('call', 1, at), makeLeg('call', -1, upper)];
+  if (key === 'bear-put-spread') candidate = [makeLeg('put', 1, at), makeLeg('put', -1, lower)];
+  if (key === 'straddle') candidate = [makeLeg('call', 1, at), makeLeg('put', 1, at)];
+  if (key === 'short-straddle') candidate = [makeLeg('call', -1, at), makeLeg('put', -1, at)];
+  if (key === 'long-guts') candidate = [makeLeg('call', 1, lower), makeLeg('put', 1, upper)];
+  if (key === 'long-strangle') candidate = [makeLeg('put', 1, lower), makeLeg('call', 1, upper)];
+  if (key === 'short-strangle') candidate = [makeLeg('put', -1, lower), makeLeg('call', -1, upper)];
+  if (key === 'iron-condor') candidate = [makeLeg('put', 1, farLower), makeLeg('put', -1, lower), makeLeg('call', -1, upper), makeLeg('call', 1, farUpper)];
+  if (candidate && market.connected && recognizeStrategy(candidate) !== key) {
+    const strikes = alignPresetStrikes(key, candidate, market.chain);
+    if (strikes) candidate.forEach((leg, i) => { leg.strike = strikes[i]; leg.premium = samplePremium(leg.type, leg.strike, leg.side); });
+  }
+  if (!candidate || recognizeStrategy(candidate) !== key) {
+    $('strategy-select').value = state.strategy;
+    showToast('Could not form that strategy with the selected listed strikes.');
+    return;
+  }
   state.strategy = key;
-  if (key === 'long-call') state.legs = [makeLeg('call', 1, at)];
-  if (key === 'long-put') state.legs = [makeLeg('put', 1, at)];
-  if (key === 'bull-call-spread') state.legs = [makeLeg('call', 1, at), makeLeg('call', -1, upper)];
-  if (key === 'bear-put-spread') state.legs = [makeLeg('put', 1, at), makeLeg('put', -1, lower)];
-  if (key === 'straddle') state.legs = [makeLeg('call', 1, at), makeLeg('put', 1, at)];
-  if (key === 'short-straddle') state.legs = [makeLeg('call', -1, at), makeLeg('put', -1, at)];
-  if (key === 'long-guts') state.legs = [makeLeg('call', 1, lower), makeLeg('put', 1, upper)];
-  if (key === 'long-strangle') state.legs = [makeLeg('put', 1, lower), makeLeg('call', 1, upper)];
-  if (key === 'short-strangle') state.legs = [makeLeg('put', -1, lower), makeLeg('call', -1, upper)];
-  if (key === 'iron-condor') state.legs = [makeLeg('put', 1, farLower), makeLeg('put', -1, lower), makeLeg('call', -1, upper), makeLeg('call', 1, farUpper)];
+  state.legs = candidate;
   state.day = 0;
   render();
 }
@@ -383,7 +395,7 @@ function syncContractEditor() {
   };
   panel.querySelector('[data-editor-bid]').textContent = quoteValue('bid');
   panel.querySelector('[data-editor-ask]').textContent = quoteValue('ask');
-  panel.querySelector('[data-editor-iv]').parentElement.title = quote?.iv > 0 ? 'Contract implied volatility, adjusted by the scenario slider.' : 'Scenario volatility; contract implied volatility is unavailable.';
+  panel.querySelector('[data-editor-iv]').parentElement.title = Number(quote?.iv) > .0000101 ? 'Contract implied volatility, adjusted by the scenario slider.' : 'Scenario volatility; contract implied volatility is unavailable.';
   panel.querySelector('[data-editor-delta]').parentElement.title = 'Contract delta uses the IV shown here. Portfolio Greeks use the flat scenario IV.';
   panel.querySelector('[data-editor-iv]').textContent = Number.isFinite(iv) ? (iv * 100).toFixed(1) + '%' : '—';
   panel.querySelector('[data-editor-delta]').textContent = Number.isFinite(delta) ? signedGreek(delta, 3) : '—';
@@ -906,7 +918,7 @@ function makeChartModel(chart) {
   const expiry = chartSeries(state, minPrice, maxPrice, dte);
   const all = [...selected, ...expiry].map(point => point.y).filter(Number.isFinite);
   let minY = Math.min(0, ...all), maxY = Math.max(0, ...all);
-  const padding = Math.max(100, (maxY - minY) * .09);
+  const padding = chartPadding(minY, maxY);
   minY -= padding; maxY += padding;
   const yAxis = niceTicks(minY, maxY, 6);
   if (yAxis.ticks.length > 1) {
@@ -1138,7 +1150,7 @@ function renderDataStatus() {
     detail.replaceChildren(...parts.flatMap((part, index) => index ? [document.createTextNode(' · '), part] : [part]));
   } else {
     if (market.loading) detail.textContent = 'Illustrative prices · Connecting to Yahoo Finance…';
-    else detail.replaceChildren(node('span', '', 'Illustrative prices · Yahoo unavailable'), node('span', 'status-retry', seconds ? '· Retry in ' + wait : '· Open data details to retry'));
+    else detail.replaceChildren(node('span', '', 'Illustrative prices · Yahoo unavailable' + (state.currency ? ' · Saved currency: ' + state.currency : '')), node('span', 'status-retry', seconds ? '· Retry in ' + wait : '· Open data details to retry'));
   }
   const retry = $('retry-market-data');
   if (retry) {
@@ -1232,7 +1244,7 @@ function captureContractDeltas() {
   });
 }
 
-async function loadMarketSymbol(client, symbol, deltaTargets = null, preservePositions = false) {
+async function loadMarketSymbol(client, symbol, deltaTargets = null, preservePositions = false, forceRefresh = false) {
   cancelMarketRequest();
   const controller = marketAbort = new AbortController();
   const version = ++marketRequestVersion;
@@ -1242,7 +1254,7 @@ async function loadMarketSymbol(client, symbol, deltaTargets = null, preservePos
   let quote, dates, expiry, chain;
   try {
     if (typeof client.loadSymbol === 'function') {
-      const snapshot = await client.loadSymbol(symbol, state.expiry, { signal: controller.signal });
+      const snapshot = await client.loadSymbol(symbol, state.expiry, { signal: controller.signal, forceRefresh });
       quote = snapshot.quote;
       dates = snapshot.expirations;
       expiry = dates.includes(snapshot.selectedExpiration) ? snapshot.selectedExpiration : dates.includes(state.expiry) ? state.expiry : dates[0];
@@ -1268,12 +1280,13 @@ async function loadMarketSymbol(client, symbol, deltaTargets = null, preservePos
   marketRetryAt = 0;
   if (symbol !== state.symbol) state.dividendYieldMode = 'auto';
   state.symbol = symbol;
+  state.currency = /^[A-Z]{3}$/.test(quote.currency || '') ? quote.currency : (preservePositions ? state.currency : null);
   if (!preservePositions) state.spot = Number(quote.last);
-  if (!preservePositions && state.dividendYieldMode === 'auto') state.dividendYield = clamp(Number(quote.dividendYield) || 0, 0, .25);
+  if (!preservePositions && state.dividendYieldMode === 'auto') state.dividendYield = clamp(Number(quote.dividendYield) || 0, 0, 10);
   state.expiry = expiry;
   if (!preservePositions) state.day = 0;
   else state.day = clamp(state.day, 0, daysUntil(expiry));
-  const near = chain.filter(option => option.type === 'call' && option.iv > 0).sort((a, b) => Math.abs(a.strike - state.spot) - Math.abs(b.strike - state.spot))[0];
+  const near = chain.filter(option => option.type === 'call' && Number.isFinite(option.iv) && option.iv > .0000101).sort((a, b) => Math.abs(a.strike - state.spot) - Math.abs(b.strike - state.spot))[0];
   if (near && !preservePositions) state.iv = contractImpliedVolatility(near.iv, state.iv);
   const targetsById = new Map((deltaTargets || []).map(target => [target.id, target]));
   for (const leg of state.legs) {
@@ -1377,6 +1390,7 @@ async function commitTicker(value) {
     });
     if (loaded && mappedContractExists) showToast('Contracts adjusted to similar deltas on ' + symbol + '.');
   } catch (error) {
+    if (requestVersion !== tickerCommitVersion || error.name === 'AbortError') return;
     if (!market.connected) market.client = null;
     showToast(error.message);
     render();
@@ -1403,7 +1417,7 @@ async function loadMarketExpiry(value) {
     market.loading = false;
     state.expiry = value;
     state.day = 0;
-    const near = chain.filter(option => option.type === 'call' && option.iv > 0).sort((a, b) => Math.abs(a.strike - state.spot) - Math.abs(b.strike - state.spot))[0];
+    const near = chain.filter(option => option.type === 'call' && Number.isFinite(option.iv) && option.iv > .0000101).sort((a, b) => Math.abs(a.strike - state.spot) - Math.abs(b.strike - state.spot))[0];
     if (near) state.iv = contractImpliedVolatility(near.iv, state.iv);
     for (const leg of state.legs) {
       leg.strike = availableStrike(leg.type, leg.strike);
@@ -1430,7 +1444,7 @@ function openDataSettings() {
     errorText.textContent = '';
     try {
       renderDataStatus();
-      const connected = await loadMarketSymbol(market.client || new YFinanceClient(), state.symbol);
+      const connected = await loadMarketSymbol(market.client || new YFinanceClient(), state.symbol, null, false, true);
       if (!connected) return;
       closeModal();
       showToast('Yahoo Finance data loaded.');
@@ -1701,7 +1715,7 @@ $('expiry-prev').onclick = () => scrollExpirations(-1);
 $('expiry-next').onclick = () => scrollExpirations(1);
 $('expiration-strip').addEventListener('scroll', updateExpirationNav, { passive: true });
 $('spot-input').addEventListener('focus', event => { event.target.value = state.spot.toFixed(2); event.target.select(); });
-$('spot-input').addEventListener('change', event => { const value = Number(event.target.value.replaceAll(',', '')); if (Number.isFinite(value) && value > 0 && value <= 1000000) state.spot = value; else showToast('Enter a price greater than zero.'); render(); });
+$('spot-input').addEventListener('change', event => { const input = event.target.value.trim(); const valid = /^(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?$/.test(input); const value = valid ? Number(input.replaceAll(',', '')) : NaN; if (Number.isFinite(value) && value > 0 && value <= 1000000) state.spot = value; else { event.target.value = state.spot.toFixed(2); showToast('Enter a valid price using a decimal point.'); } render(); });
 $('spot-input').addEventListener('blur', event => { event.target.value = state.spot.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); });
 $('assumptions-help').onclick = openAssumptions;
 $('reset-scenario').onclick = () => { state.day = 0; state.range = 15; state.ivScale = 1; render(); };
@@ -1710,13 +1724,13 @@ $('model-select').addEventListener('change', event => {
   render();
 });
 $('dividend-yield').addEventListener('change', event => {
-  state.dividendYield = clamp((Number(event.target.value) || 0) / 100, 0, .25);
+  state.dividendYield = clamp((Number(event.target.value) || 0) / 100, 0, 10);
   state.dividendYieldMode = 'manual';
   render();
 });
 $('yield-auto').addEventListener('click', () => {
   state.dividendYieldMode = 'auto';
-  state.dividendYield = clamp(Number(market.quote?.dividendYield) || 0, 0, .25);
+  state.dividendYield = clamp(Number(market.quote?.dividendYield) || 0, 0, 10);
   render();
 });
 $('add-leg').onclick = openAdd;

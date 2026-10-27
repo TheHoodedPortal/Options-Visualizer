@@ -27,3 +27,12 @@ test('queue limits its size and waiting time', async () => {
   await assert.rejects(waiting, /wait timed out/i);
   release(); await active;
 });
+
+test('queue immediately rejects work beyond its usable waiting capacity', async () => {
+  const queue = new RequestQueue({ gapMs: 10, maxQueued: 2, maxWaitMs: 100 });
+  const started = [];
+  const jobs = [1, 2, 3].map(id => queue.enqueue(() => { started.push(id); return id; }));
+  await assert.rejects(queue.enqueue(() => 4), /queue is full/i);
+  assert.deepEqual(await Promise.all(jobs), [1, 2, 3]);
+  assert.deepEqual(started, [1, 2, 3]);
+});

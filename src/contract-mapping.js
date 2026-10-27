@@ -2,7 +2,7 @@ import { optionDelta, PRICING_MODELS, RATE } from './pricing.js';
 
 export function contractImpliedVolatility(rawValue, fallback) {
   const raw = Number(rawValue);
-  if (!Number.isFinite(raw) || raw <= 0) return fallback;
+  if (!Number.isFinite(raw) || raw <= .0000101) return fallback;
   // Yahoo Finance returns IV as a decimal fraction, including values above 3.
   return raw;
 }

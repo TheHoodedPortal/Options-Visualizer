@@ -12,23 +12,24 @@ export class YFinanceClient {
     return String(symbol).toUpperCase() + ':' + (expiration || 'nearest');
   }
 
-  async request(symbol, expiration = '', { signal } = {}) {
+  async request(symbol, expiration = '', { signal, forceRefresh = false } = {}) {
     const normalizedSymbol = String(symbol || '').trim().toUpperCase();
     const key = this.key(normalizedSymbol, expiration);
     const cached = this.cache.get(key);
-    if (cached && cached.expiresAt > Date.now()) return cached.data;
-    if (!signal && this.pending.has(key)) return this.pending.get(key);
+    if (!forceRefresh && cached && cached.expiresAt > Date.now()) return cached.data;
+    if (!signal && !forceRefresh && this.pending.has(key)) return this.pending.get(key);
 
-    const pending = this.load(normalizedSymbol, expiration, key, signal);
-    if (!signal) this.pending.set(key, pending);
+    const pending = this.load(normalizedSymbol, expiration, key, signal, forceRefresh);
+    if (!signal && !forceRefresh) this.pending.set(key, pending);
     try { return await pending; }
-    finally { if (!signal) this.pending.delete(key); }
+    finally { if (!signal && !forceRefresh) this.pending.delete(key); }
   }
 
-  async load(symbol, expiration, key, signal) {
+  async load(symbol, expiration, key, signal, forceRefresh) {
     const url = new URL('/api/yfinance', location.origin);
     url.searchParams.set('symbol', symbol);
     if (expiration) url.searchParams.set('expiration', expiration);
+    if (forceRefresh) url.searchParams.set('refresh', '1');
 
     let response;
     try {
@@ -45,8 +46,9 @@ export class YFinanceClient {
       throw new Error('The local yfinance connector returned incomplete market data.');
     }
 
+    if (forceRefresh) for (const cachedKey of this.cache.keys()) if (cachedKey.startsWith(symbol + ':')) this.cache.delete(cachedKey);
     const entry = { data: body, expiresAt: Date.now() + CACHE_TTL_MS };
-    if (!expiration || body.selectedExpiration === expiration) this.cache.set(key, entry);
+    this.cache.set(key, entry);
     if (body.selectedExpiration) this.cache.set(this.key(symbol, body.selectedExpiration), entry);
     return body;
   }

@@ -50,7 +50,7 @@ def option_rows(frame, option_type):
     return result
 
 
-def market_snapshot(yf, ticker_cache, symbol, expiration=None, today=None):
+def market_snapshot(yf, ticker_cache, symbol, expiration=None, today=None, force_refresh=False):
     ticker = ticker_cache.pop(symbol, None)
     if ticker is None:
         ticker = yf.Ticker(symbol)
@@ -62,7 +62,7 @@ def market_snapshot(yf, ticker_cache, symbol, expiration=None, today=None):
     # quote, and nearest chain. Keep that response briefly so changing expiry
     # does not refetch the same nearest chain.
     nearest_cache = getattr(ticker, "_openstrat_nearest_option_set", None)
-    if nearest_cache and time.monotonic() - nearest_cache[0] < 5 * 60:
+    if not force_refresh and nearest_cache and time.monotonic() - nearest_cache[0] < 5 * 60:
         nearest_option_set = nearest_cache[1]
     else:
         nearest_option_set = ticker.option_chain()
@@ -107,7 +107,7 @@ def market_snapshot(yf, ticker_cache, symbol, expiration=None, today=None):
     if not last or last <= 0:
         raise ValueError("Yahoo Finance did not return a usable underlying price for " + symbol + ".")
 
-    dividend_yield = number(get_value(underlying, "trailingAnnualDividendYield", "dividendYield"))
+    dividend_yield = number(get_value(underlying, "trailingAnnualDividendYield"))
     dividend_yield_source = "Yahoo Finance trailing dividend yield" if dividend_yield is not None else None
     if dividend_yield is None:
         dividend_rate = number(get_value(underlying, "trailingAnnualDividendRate", "dividendRate"))
@@ -136,6 +136,10 @@ def market_snapshot(yf, ticker_cache, symbol, expiration=None, today=None):
     }
 
 
+def error_code(error):
+    return 'rate_limited' if any(cls.__name__ == 'YFRateLimitError' for cls in type(error).__mro__) else None
+
+
 def emit(value):
     sys.stdout.write(json.dumps(value, separators=(",", ":"), allow_nan=False) + "\n")
     sys.stdout.flush()
@@ -162,10 +166,10 @@ def main():
             expiration = str(command.get("expiration") or "")
             if not symbol or not all(char.isalnum() or char in ".^=-" for char in symbol):
                 raise ValueError("Enter a valid ticker symbol.")
-            data = market_snapshot(yf, ticker_cache, symbol, expiration or None)
+            data = market_snapshot(yf, ticker_cache, symbol, expiration or None, force_refresh=command.get("forceRefresh") is True)
             emit({"id": command.get("id"), "ok": True, "data": data})
         except Exception as error:
-            emit({"id": command.get("id") if isinstance(command, dict) else None, "ok": False, "error": str(error)[:500]})
+            emit({"id": command.get("id") if isinstance(command, dict) else None, "ok": False, "error": str(error)[:500], "code": error_code(error)})
 
 
 if __name__ == "__main__":

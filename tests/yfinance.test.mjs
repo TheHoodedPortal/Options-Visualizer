@@ -81,7 +81,7 @@ test('explicit expiration never overwrites the nearest expiration cache', async 
   assert.equal(calls, 2);
 });
 
-test('does not treat a fallback chain as the requested expiration', async () => {
+test('caches fallback data without treating it as the requested expiration', async () => {
   let calls = 0;
   const client = new YFinanceClient(async () => {
     calls++;
@@ -89,7 +89,7 @@ test('does not treat a fallback chain as the requested expiration', async () => 
   });
   await assert.rejects(client.chain('MU', '2026-12-18'), /no longer available/);
   await assert.rejects(client.chain('MU', '2026-12-18'), /no longer available/);
-  assert.equal(calls, 2);
+  assert.equal(calls, 1);
   assert.equal((await client.request('MU', '2026-11-13')).selectedExpiration, '2026-11-13');
 });
 
@@ -106,4 +106,17 @@ test('superseded requests can be aborted without canceling another request', asy
   await assert.rejects(first, error => error.name === 'AbortError');
   calls[1].resolve({ ok: true, json: async () => ({ quote: {}, expirations: ['2026-11-13'], selectedExpiration: '2026-11-13', chain: [] }) });
   assert.equal((await second).selectedExpiration, '2026-11-13');
+});
+
+test('explicit refresh bypasses cached data and updates the symbol cache', async () => {
+  let calls = 0;
+  const urls = [];
+  const client = new YFinanceClient(async url => {
+    urls.push(new URL(url));
+    return { ok: true, json: async () => ({ quote: { last: ++calls }, expirations: ['2026-11-13'], selectedExpiration: '2026-11-13', chain: [] }) };
+  });
+  assert.equal((await client.request('MU')).quote.last, 1);
+  assert.equal((await client.request('MU', '', { forceRefresh: true })).quote.last, 2);
+  assert.equal(urls[1].searchParams.get('refresh'), '1');
+  assert.equal((await client.request('MU')).quote.last, 2);
 });

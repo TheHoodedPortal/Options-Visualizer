@@ -30,3 +30,7 @@ export function wholeDollarTicks(minimum, maximum, targetCount = 6) {
   for (let value = first; value <= last && ticks.length < 100; value += step) ticks.push(value);
   return { step, ticks };
 }
+
+export function chartPadding(minimum, maximum) {
+  return Math.max(.01, (maximum - minimum) * .09);
+}

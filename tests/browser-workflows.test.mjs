@@ -25,12 +25,12 @@ test('browser workflows keep dates, currency, saved trades, and the latest marke
   install('Date', FakeDate);
   const pending = [];
   install('fetch', url => new Promise(resolve => pending.push({ url: new URL(url), resolve })));
-  const respond = (symbol, expiration, {currency = 'USD', types = ['call', 'put'], iv = .3} = {}) => {
+  const respond = (symbol, expiration, {currency = 'USD', types = ['call', 'put'], iv = .3, strikes = [92.5, 97.5, 102.5]} = {}) => {
     const index = pending.findIndex(item => item.url.searchParams.get('symbol') === symbol && (item.url.searchParams.get('expiration') || '') === expiration);
     assert.notEqual(index, -1, `missing request ${symbol} ${expiration}`);
     const [{ resolve }] = pending.splice(index, 1);
     const selectedExpiration = expiration || '2026-11-13';
-    resolve({ ok: true, json: async () => ({ quote: { symbol, last: 100, currency }, expirations: ['2026-11-13', '2026-11-20', '2026-12-18'], selectedExpiration, chain: types.flatMap(type => [92.5, 97.5, 102.5].map(strike => ({ type, strike, bid: 1, ask: 2, iv, volume: 1 }))) }) });
+    resolve({ ok: true, json: async () => ({ quote: { symbol, last: 100, currency }, expirations: ['2026-11-13', '2026-11-20', '2026-12-18'], selectedExpiration, chain: types.flatMap(type => strikes.map(strike => ({ type, strike, bid: 1, ask: 2, iv, volume: 1 }))) }) });
   };
   const flush = async () => { for (let i = 0; i < 6; i++) await new Promise(resolve => setImmediate(resolve)); };
   const el = id => w.document.getElementById(id);
@@ -39,6 +39,12 @@ test('browser workflows keep dates, currency, saved trades, and the latest marke
     await import('../src/main.js');
     respond('MU', '2026-11-13', {currency: 'CAD', iv: 3.5}); await flush();
     assert.equal(el('iv-label').textContent, '350.0%');
+    assert.equal(el('iv-slider').min, '40');
+    assert.match(w.document.querySelector('.iv-scale').textContent, /0\.4×1×2×/);
+    click('data-button');
+    [...el('modal-content').querySelectorAll('button')].find(button => button.textContent === 'Reload data').click();
+    assert.equal(pending.find(item => item.url.searchParams.get('symbol') === 'MU').url.searchParams.get('refresh'), '1');
+    respond('MU', '2026-11-13', {currency: 'CAD', iv: 3.5}); await flush();
     assert.match(w.document.querySelector('.data-note').textContent, /flat scenario volatility/);
     assert.match(el('greeks-note').textContent, /flat scenario IV/);
     assert.equal(el('spot-currency').textContent, '$');
@@ -55,6 +61,11 @@ test('browser workflows keep dates, currency, saved trades, and the latest marke
     const chartLabels = el('payoff-chart').textContent;
     assert.match(chartLabels, /\$/);
     assert.doesNotMatch(chartLabels, /CAD/);
+    el('spot-input').value = '1047,60'; el('spot-input').dispatchEvent(new w.Event('change'));
+    assert.equal(el('spot-input').value, '100.00');
+    assert.match(el('toast').textContent, /decimal point/);
+    el('dividend-yield').value = '40'; el('dividend-yield').dispatchEvent(new w.Event('change'));
+    assert.equal(el('dividend-yield').value, '40.00');
     el('spot-input').value = '125'; el('spot-input').dispatchEvent(new w.Event('change'));
     el('iv-slider').value = '150'; el('iv-slider').dispatchEvent(new w.Event('input'));
     el('strategy-select').value = 'short-straddle'; el('strategy-select').dispatchEvent(new w.Event('change'));
@@ -106,6 +117,14 @@ test('browser workflows keep dates, currency, saved trades, and the latest marke
     assert.equal(el('spot-input').value, '125.00');
     assert.equal(el('iv-slider').value, '150');
 
+    // Sparse chains must not be mislabeled as spreads or condors.
+    el('symbol-input').value = 'SPARSE'; el('symbol-input').dispatchEvent(new w.Event('change'));
+    respond('SPARSE', '2026-11-13', {strikes: [100]}); await flush();
+    const oldStrategy = el('strategy-select').value;
+    el('strategy-select').value = 'iron-condor'; el('strategy-select').dispatchEvent(new w.Event('change'));
+    assert.equal(el('strategy-select').value, oldStrategy);
+    assert.match(el('toast').textContent, /could not form/i);
+
     // Starting with calls only must reject puts and prevent invented contracts.
     el('symbol-input').value = 'CALL'; el('symbol-input').dispatchEvent(new w.Event('change'));
     respond('CALL', '2026-11-13', {types: ['call']}); await flush();
@@ -117,6 +136,18 @@ test('browser workflows keep dates, currency, saved trades, and the latest marke
     selects[0].value = 'put'; selects[0].dispatchEvent(new w.Event('change'));
     [...el('modal-content').querySelectorAll('button')].find(button => button.textContent === 'Add Position').click();
     assert.match(el('toast').textContent, /listed strike/i);
+
+    // A saved CAD scenario retains its currency if reconnecting fails.
+    click('close-modal');
+    now += 6 * 60_000;
+    click('history-button');
+    [...el('modal-content').querySelectorAll('button')].find(button => button.textContent === 'Load').click();
+    const index = pending.findIndex(item => item.url.searchParams.get('symbol') === 'MU');
+    assert.notEqual(index, -1);
+    pending.splice(index, 1)[0].resolve({ ok: false, json: async () => ({error: 'Offline'}) });
+    await flush();
+    assert.match(el('data-status-detail').textContent, /Saved currency: CAD/);
+    assert.equal(el('spot-currency').textContent, '$');
   } finally {
     w.close();
     for (const [name, value] of Object.entries(original)) { if (value === undefined) delete globalThis[name]; else Object.defineProperty(globalThis, name, value); }

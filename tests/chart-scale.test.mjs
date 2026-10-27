@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { niceTicks, wholeDollarTicks } from '../src/chart-scale.js';
+import { niceTicks, wholeDollarTicks, chartPadding } from '../src/chart-scale.js';
 
 test('nice chart bounds round outward and keep the full payoff in frame', () => {
   const axis = niceTicks(-5945, 9160, 6);
@@ -47,4 +47,10 @@ test('fractional tick intervals keep a penny-stock range readable', () => {
   assert.ok(axis.step < 1);
   assert.ok(axis.ticks[0] <= .40 && axis.ticks.at(-1) >= .60);
   assert.ok(axis.ticks.at(-1) - axis.ticks[0] < .5);
+});
+
+test('small payoff ranges are not buried under fixed $100 padding', () => {
+  assert.ok(Math.abs(chartPadding(-2, 3) - .45) < 1e-10);
+  assert.equal(chartPadding(0, 0), .01);
+  assert.equal(chartPadding(-1000, 1000), 180);
 });

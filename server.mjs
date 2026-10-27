@@ -305,7 +305,7 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    const allowed = pathname === '/' || pathname === '/index.html' || pathname === '/liquid.html' || /^\/src\/(?:main|yfinance|pricing|contract-mapping|strategies|strikes|tickers|chart-scale|glass-optics|liquid-glass)\.js$/.test(pathname) || /^\/src\/(?:styles\.(?:hierarchy|previous)|liquid-glass(?:\.previous)?|popup-glass)\.css$/.test(pathname);
+    const allowed = pathname === '/' || pathname === '/index.html' || /^\/src\/(?:main|yfinance|pricing|contract-mapping|strategies|strikes|tickers|chart-scale|glass-optics|liquid-glass)\.js$/.test(pathname) || /^\/src\/(?:styles\.(?:hierarchy|previous)|liquid-glass(?:\.previous)?|popup-glass)\.css$/.test(pathname);
     if (!allowed || request.method !== 'GET') { response.writeHead(404).end('Not found'); return; }
     let file = resolve(root, '.' + pathname);
     if (file !== root && !file.startsWith(root + sep)) {

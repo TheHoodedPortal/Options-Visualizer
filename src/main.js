@@ -88,6 +88,7 @@ function safeState(raw) {
     strike: boundedNumber(leg?.strike, 100, .01, 1000000), qty: Math.round(boundedNumber(leg?.qty, 1, 1, 100)),
     premium: boundedNumber(leg?.premium, 0, 0, 1000000), manual: !!leg.manual, excluded: !!leg.excluded,
     premiumSource: ['ask', 'bid', 'last', 'model'].includes(leg.premiumSource) ? leg.premiumSource : null,
+    premiumStrike: leg.manual ? boundedNumber(leg.premiumStrike ?? leg.strike, leg.strike, .01, 1000000) : null,
     premiumExpiry: leg.manual && /^\d{4}-\d{2}-\d{2}$/.test(leg.premiumExpiry || '') ? leg.premiumExpiry : (leg.manual ? raw.expiry : null),
     premiumSymbol: leg.manual && /^[A-Z0-9.^=-]{1,12}$/.test(leg.premiumSymbol || '') ? leg.premiumSymbol : (leg.manual ? String(raw.symbol || 'MU').toUpperCase() : null)
   }));
@@ -139,6 +140,9 @@ function showToast(message) {
 function availableStrike(type, desired) {
   return snapStrike(market.connected ? market.chain : [], state.spot, desired, type, market.connected);
 }
+function hasListedContract(leg) {
+  return !market.connected || market.chain.some(option => option.type === leg.type && Math.abs(option.strike - leg.strike) < .001);
+}
 function premiumEstimate(type, strike, side = 1) {
   if (market.connected) {
     const quote = market.chain.find(option => option.type === type && Math.abs(option.strike - strike) < .001);
@@ -170,7 +174,7 @@ function classifyRemappedStrategy(previousStrategy) {
         for (let i = 0; i < state.legs.length; i++) {
           const leg = state.legs[i];
           leg.strike = strikes[i];
-          if (!leg.manual) setSuggestedPremium(leg);
+          if (!leg.manual && hasListedContract(leg)) setSuggestedPremium(leg);
         }
       }
     }
@@ -557,7 +561,7 @@ function openContractEditor(legId) {
     if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1000000) { price.value = current.premium.toFixed(2); return; }
     current.premium = parsed;
     current.manual = true;
-    current.premiumExpiry = state.expiry; current.premiumSymbol = state.symbol;
+    current.premiumExpiry = state.expiry; current.premiumSymbol = state.symbol; current.premiumStrike = current.strike;
     render();
   };
   priceWrap.append(price); priceField.append(priceWrap);
@@ -570,6 +574,7 @@ function openContractEditor(legId) {
   include.onchange = () => {
     const current = state.legs.find(item => item.id === contractEditorLegId);
     if (!current) return;
+    if (include.checked && !hasListedContract(current)) { include.checked = false; showToast('Choose a listed contract before including this position.'); return; }
     current.excluded = !include.checked;
     classifyStrategy(); render();
   };
@@ -913,13 +918,14 @@ function renderStats() {
     const hasBidAsk = contractQuote && (Number(contractQuote.bid) > 0 || Number(contractQuote.ask) > 0);
     const quoteText = value => hasBidAsk && Number.isFinite(contractQuote[value]) ? money(contractQuote[value], 2) : '—';
     const bid = quoteText('bid'), ask = quoteText('ask');
-    const carried = leg.manual && ((leg.premiumExpiry && leg.premiumExpiry !== state.expiry) || (leg.premiumSymbol && leg.premiumSymbol !== state.symbol));
+    const carried = leg.manual && ((leg.premiumExpiry && leg.premiumExpiry !== state.expiry) || (leg.premiumSymbol && leg.premiumSymbol !== state.symbol) || (leg.premiumStrike != null && Math.abs(leg.premiumStrike - leg.strike) > .001));
     const fallback = leg.premiumSource === 'last' ? 'Last trade estimate; no usable ask'
       : leg.premiumSource === 'model' && market.connected ? 'Model estimate; no usable ' + (leg.side === 1 ? 'ask' : 'bid') : '';
-    const premiumNote = carried ? ' · Custom premium carried from ' + (leg.premiumSymbol || state.symbol) + ' ' + (leg.premiumExpiry || '') : leg.manual ? ' · Custom' : fallback ? ' · ' + fallback : '';
-    row.setAttribute('aria-label', 'Edit ' + title + '. Bid ' + bid + ', ask ' + ask + (leg.excluded ? ', excluded from analysis' : premiumNote));
+    const strikeNote = leg.premiumStrike != null && Math.abs(leg.premiumStrike - leg.strike) > .001 ? ' at ' + money(leg.premiumStrike, leg.premiumStrike % 1 ? 2 : 0) + ' strike' : '';
+    const premiumNote = carried ? ' · Custom premium carried from ' + (leg.premiumSymbol || state.symbol) + ' ' + (leg.premiumExpiry || '') + strikeNote : leg.manual ? ' · Custom' : fallback ? ' · ' + fallback : '';
+    row.setAttribute('aria-label', 'Edit ' + title + '. Bid ' + bid + ', ask ' + ask + (leg.excluded ? ', excluded from analysis' + (hasListedContract(leg) ? '' : ', not listed for this expiration') : '') + premiumNote);
     const details = node('span', 'ticket-leg-details');
-    details.append(node('span', 'ticket-leg-title', title), node('small', '', leg.excluded ? 'Excluded from analysis' : money(leg.premium, 2) + ' / share' + premiumNote));
+    details.append(node('span', 'ticket-leg-title', title), node('small', '', leg.excluded ? 'Excluded from analysis' + (hasListedContract(leg) ? '' : ' · Not listed for this expiration') + premiumNote : money(leg.premium, 2) + ' / share' + premiumNote));
     const quote = node('span', 'ticket-leg-quotes');
     for (const [label, value] of [['Bid', bid], ['Ask', ask]]) {
       const item = node('span', 'ticket-quote');
@@ -1157,7 +1163,7 @@ function renderDataStatus() {
     parts.push(node('span', 'quote-freshness', 'Delayed'));
     parts.push(node('span', '', asOf ? 'Quote as of ' + asOf : 'Quote time unavailable'));
     parts.push(node('span', '', currency() ? 'Currency: ' + currency() : 'Currency unavailable'));
-    if (state.legs.some(leg => !market.chain.some(option => option.type === leg.type && Math.abs(option.strike - leg.strike) < .001))) parts.push(node('span', '', 'Some saved positions are not listed in the current chain'));
+    if (state.legs.some(leg => !hasListedContract(leg))) parts.push(node('span', '', 'Some positions are not listed in the current chain'));
     if (market.error) parts.push(node('span', '', 'Refresh unavailable'));
     else if (market.loading) parts.push(node('span', '', 'Refreshing…'));
     detail.replaceChildren(...parts.flatMap((part, index) => index ? [document.createTextNode(' · '), part] : [part]));
@@ -1279,7 +1285,7 @@ async function loadMarketSymbol(client, symbol, deltaTargets = null, preservePos
     if (!expiry) expiry = dates.includes(state.expiry) ? state.expiry : dates.find(date => daysUntil(date) > 0) || dates[0];
     if (!chain) chain = await client.chain(symbol, expiry, { signal: controller.signal });
     if (!chain.length) throw new Error('No standard 100-share options were returned for this expiration.');
-    if (!preservePositions && state.legs.some(leg => !chain.some(option => option.type === leg.type))) throw new Error('No listed contracts are available for a position type in this expiration.');
+    if (!preservePositions && state.legs.some(leg => !leg.excluded && !chain.some(option => option.type === leg.type))) throw new Error('No listed contracts are available for a position type in this expiration.');
     if (preservePositions && expiry !== state.expiry) throw new Error('The saved expiration is no longer listed. Saved positions remain unchanged.');
   } catch (error) {
     if (version !== marketRequestVersion) return false;
@@ -1305,6 +1311,7 @@ async function loadMarketSymbol(client, symbol, deltaTargets = null, preservePos
   for (const leg of state.legs) {
     if (preservePositions) continue;
     const candidates = chain.filter(option => option.type === leg.type);
+    if (!candidates.length) continue;
     const target = targetsById.get(leg.id);
     if (target && candidates.length) {
       leg.strike = closestStrikeAtDelta({
@@ -1427,7 +1434,7 @@ async function loadMarketExpiry(value) {
     const chain = await client.chain(symbol, value, { signal: controller.signal });
     if (version !== marketRequestVersion || state.symbol !== symbol || market.client !== client) return;
     if (!chain.length) throw new Error('No standard options returned for that expiration.');
-    if (state.legs.some(leg => !chain.some(option => option.type === leg.type))) throw new Error('No listed contracts are available for a position type in that expiration.');
+    if (state.legs.some(leg => !leg.excluded && !chain.some(option => option.type === leg.type))) throw new Error('No listed contracts are available for a position type in that expiration.');
     market.chain = chain;
     market.loading = false;
     state.expiry = value;
@@ -1435,7 +1442,9 @@ async function loadMarketExpiry(value) {
     const near = chain.filter(option => option.type === 'call' && Number.isFinite(option.iv) && option.iv > .0000101).sort((a, b) => Math.abs(a.strike - state.spot) - Math.abs(b.strike - state.spot))[0];
     if (near) state.iv = contractImpliedVolatility(near.iv, state.iv);
     for (const leg of state.legs) {
-      leg.strike = availableStrike(leg.type, leg.strike);
+      const strike = availableStrike(leg.type, leg.strike);
+      if (strike == null) continue;
+      leg.strike = strike;
       if (!leg.manual) setSuggestedPremium(leg);
     }
     classifyRemappedStrategy(state.strategy);
@@ -1532,7 +1541,7 @@ function openAdd() {
     if (market.connected && !market.chain.some(option => option.type === type.control.value && Math.abs(option.strike - k) < .001)) { showToast('Choose a listed strike for this option type.'); return; }
     if (!(k > 0 && q > 0 && p >= 0)) { showToast('Enter a valid strike, quantity, and premium.'); return; }
     const manual = premiumEdited || p !== Number(suggested.value.toFixed(2));
-    state.legs.push({ id: nextId++, type: type.control.value, side: Number(side.control.value), strike: k, qty: q, premium: p, manual, premiumSource: manual ? null : suggested.source, excluded: false, premiumExpiry: manual ? state.expiry : null, premiumSymbol: manual ? state.symbol : null });
+    state.legs.push({ id: nextId++, type: type.control.value, side: Number(side.control.value), strike: k, qty: q, premium: p, manual, premiumSource: manual ? null : suggested.source, excluded: false, premiumExpiry: manual ? state.expiry : null, premiumSymbol: manual ? state.symbol : null, premiumStrike: manual ? k : null });
     classifyStrategy(); closeModal(); render(); showToast('Position added.');
   }]));
 }
@@ -1606,6 +1615,7 @@ function openPositions(focusLegId = null) {
         if (!control.reportValidity()) return;
       }
       const k = Number(strike.control.value), q = Number(qty.control.value), p = Number(premium.control.value);
+      if (leg.excluded && entry.included.checked && !hasListedContract({ type: type.control.value, strike: k })) { showToast('Choose a listed contract before including this position.'); return; }
       if (market.connected && (type.control.value !== leg.type || k !== leg.strike) && !market.chain.some(option => option.type === type.control.value && Math.abs(option.strike - k) < .001)) { showToast('Choose a listed strike for this option type.'); return; }
       const model = entry.modelPremium;
       const usesModel = model && model.type === type.control.value && model.side === Number(side.control.value) && model.strike === k && model.premium === p;
@@ -1613,7 +1623,8 @@ function openPositions(focusLegId = null) {
       updates.set(leg.id, { ...leg, type: type.control.value, side: Number(side.control.value), strike: k, qty: q, premium: p,
         manual: usesModel ? false : priceChanged ? true : leg.manual, premiumSource: usesModel ? model.source : priceChanged ? null : leg.premiumSource,
         premiumExpiry: usesModel ? null : priceChanged ? state.expiry : leg.premiumExpiry,
-        premiumSymbol: usesModel ? null : priceChanged ? state.symbol : leg.premiumSymbol, excluded: !entry.included.checked });
+        premiumSymbol: usesModel ? null : priceChanged ? state.symbol : leg.premiumSymbol,
+        premiumStrike: usesModel ? null : priceChanged ? k : leg.premiumStrike, excluded: !entry.included.checked });
     }
     state.legs = state.legs.flatMap(leg => updates.has(leg.id) ? updates.get(leg.id) ? [updates.get(leg.id)] : [] : [leg]);
     classifyStrategy(); closeModal(); render(); showToast('Position changes saved.');

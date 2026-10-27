@@ -189,6 +189,10 @@ test('browser workflows keep dates, currency, saved trades, and the latest marke
     assert.match(el('strategy-legs-summary').textContent, /\$7\.25.*carried from MU 2026-11-13/);
     selectExpiry('November 13, 2026'); await flush();
     assert.doesNotMatch(el('strategy-legs-summary').textContent, /carried from/);
+    const customStrike = Number(el('strategy-legs-summary').querySelector('button').textContent.match(/\$([\d,.]+)/)[1].replaceAll(',', ''));
+    el('symbol-input').value = 'SHIFT'; el('symbol-input').dispatchEvent(new w.Event('change'));
+    respond('SHIFT', '2026-11-13', {strikes: [150]}); await flush();
+    assert.match(el('strategy-legs-summary').textContent, new RegExp('carried from MU 2026-11-13 at \\$' + customStrike.toFixed(customStrike % 1 ? 2 : 0) + ' strike'));
 
     // Suggested prices follow side changes in Manage Positions, while edited prices stay manual.
     el('symbol-input').value = 'BIDASK'; el('symbol-input').dispatchEvent(new w.Event('change'));
@@ -225,6 +229,23 @@ test('browser workflows keep dates, currency, saved trades, and the latest marke
     el('strategy-select').value = 'short-straddle'; el('strategy-select').dispatchEvent(new w.Event('change'));
     assert.match(el('strategy-legs-summary').textContent, /Model estimate; no usable bid/);
     assert.notEqual(el('net-value').textContent, '$0');
+    const putRow = [...el('strategy-legs-summary').querySelectorAll('button')].find(row => / put/.test(row.textContent));
+    putRow.click();
+    const includePut = w.document.querySelector('[data-editor-include]');
+    includePut.checked = false; includePut.dispatchEvent(new w.Event('change'));
+    w.document.querySelector('.contract-editor-close').click();
+    selectExpiry('November 20, 2026');
+    respond('ZERO', '2026-11-20', {types: ['call']}); await flush();
+    assert.match(el('expiration-dte').textContent, /Nov 20/);
+    const unavailablePut = [...el('strategy-legs-summary').querySelectorAll('button')].find(row => / put/.test(row.textContent));
+    assert.match(unavailablePut.textContent, /Excluded from analysis.*Not listed/);
+    unavailablePut.click();
+    const unavailableInclude = w.document.querySelector('[data-editor-include]');
+    unavailableInclude.checked = true; unavailableInclude.dispatchEvent(new w.Event('change'));
+    assert.equal(unavailableInclude.checked, false);
+    assert.match(el('toast').textContent, /listed contract/);
+    w.document.querySelector('.contract-editor-close').click();
+    selectExpiry('November 13, 2026'); await flush();
     el('strategy-select').value = 'long-call'; el('strategy-select').dispatchEvent(new w.Event('change'));
 
     // Enter submits unhighlighted ticker text, and delta mapping uses today even when the scenario is at expiration.

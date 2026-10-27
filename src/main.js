@@ -941,8 +941,9 @@ function makeChartModel(chart) {
   const bounds = rulerBounds();
   const targetTicks = Math.max(1, Math.floor((width - left - right) / 58));
   const xAxis = state.spot < 1 ? niceTicks(bounds.min, bounds.max, targetTicks) : wholeDollarTicks(bounds.min, bounds.max, targetTicks);
-  const minPrice = xAxis.ticks[0] ?? bounds.min;
-  const maxPrice = xAxis.ticks.at(-1) ?? bounds.max;
+  const minPrice = bounds.min;
+  const maxPrice = bounds.max;
+  xAxis.ticks = xAxis.ticks.filter(value => value >= minPrice && value <= maxPrice);
   const dte = daysUntil(state.expiry);
   const selected = chartSeries(state, minPrice, maxPrice, state.day);
   const expiry = state.day === dte ? selected : chartSeries(state, minPrice, maxPrice, dte);
@@ -1002,9 +1003,7 @@ function drawChartFrame(model) {
   for (let i = 0; i < xAxis.ticks.length; i++) {
     const price = xAxis.ticks[i];
     const x = toX(price);
-    const labelX = i === xAxis.ticks.length - 1 ? width - right - 2 : i === 0 ? left + 2 : x;
-    const anchor = i === xAxis.ticks.length - 1 ? 'end' : i === 0 ? 'start' : 'middle';
-    const text = svgNode('text', { x: labelX, y: height - 8, fill: 'var(--color-muted)', 'font-size': 11, 'text-anchor': anchor });
+    const text = svgNode('text', { x, y: height - 8, fill: 'var(--color-muted)', 'font-size': 11, 'text-anchor': 'middle' });
     text.textContent = money(price, xAxis.step < .01 ? 3 : xAxis.step < 1 ? 2 : 0);
     chart.append(text);
   }
@@ -1087,10 +1086,11 @@ function renderVisualization() {
       : 'No dividend history estimate is available; using 0%. You can enter a manual assumption.';
   $('yield-auto').hidden = state.dividendYieldMode !== 'manual';
   $('date-slider').max = dte;
-  $('date-slider').value = state.day;
+  if (!$('date-slider').classList.contains('scenario-adjusting')) $('date-slider').value = state.day;
   $('range-slider').value = state.range;
-  $('iv-slider').value = Math.round(state.ivScale * 100);
+  $('iv-slider').value = Number((state.ivScale * 100).toFixed(1));
   $('date-label').textContent = state.day === dte ? 'Expiration' : state.day === 0 ? 'Now' : displayDate(iso(dateAfter(state.day)));
+  $('date-slider').setAttribute('aria-valuetext', $('date-label').textContent);
   $('remaining-label').textContent = (dte - state.day) + 'd to expiration';
   $('reset-scenario').disabled = state.day === dte && state.range === 15 && state.ivScale === 1;
   $('range-label').textContent = '±' + state.range + '%';
@@ -1744,7 +1744,35 @@ document.addEventListener('keydown', event => {
   if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
   else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
 });
-$('date-slider').addEventListener('input', event => { state.day = Number(event.target.value); renderGreeks(); renderControls(); renderVisualization(); });
+for (const id of ['date-slider', 'range-slider', 'iv-slider']) {
+  const slider = $(id);
+  slider.addEventListener('pointerdown', () => slider.classList.add('scenario-adjusting'));
+  const finish = () => {
+    if (!slider.classList.contains('scenario-adjusting')) return;
+    slider.classList.remove('scenario-adjusting');
+    if (id === 'date-slider') renderControls();
+  };
+  window.addEventListener('pointerup', finish);
+  window.addEventListener('pointercancel', finish);
+  window.addEventListener('blur', finish);
+}
+$('date-slider').addEventListener('input', event => {
+  const day = clamp(Math.round(Number(event.target.value)), 0, daysUntil(state.expiry));
+  if (day === state.day && event.target.classList.contains('scenario-adjusting')) {
+    event.target.style.setProperty('--range-fill', Number(event.target.value) / Math.max(1, Number(event.target.max)) * 100 + '%');
+    return;
+  }
+  state.day = day;
+  renderGreeks(); renderControls(); renderVisualization();
+});
+$('date-slider').addEventListener('keydown', event => {
+  const steps = { ArrowLeft: -1, ArrowDown: -1, ArrowRight: 1, ArrowUp: 1, PageDown: -7, PageUp: 7 };
+  if (!(event.key in steps) && event.key !== 'Home' && event.key !== 'End') return;
+  event.preventDefault();
+  const slider = event.currentTarget;
+  slider.value = event.key === 'Home' ? 0 : event.key === 'End' ? Number(slider.max) : clamp(state.day + steps[event.key], 0, Number(slider.max));
+  slider.dispatchEvent(new window.Event('input', { bubbles: true }));
+});
 $('range-slider').addEventListener('input', event => { state.range = Number(event.target.value); renderRuler(); renderControls(); renderVisualization(); });
 $('iv-slider').addEventListener('input', event => { state.ivScale = Number(event.target.value) / 100; renderStats(); renderControls(); renderVisualization(); });
 for (const button of document.querySelectorAll('[data-output]')) button.onclick = () => { state.output = button.dataset.output; renderVisualization(); };

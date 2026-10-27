@@ -133,7 +133,7 @@ function collectContentLights() {
 function renderContentLighting(time) {
   // The decorative bevels are expensive to repaint and are not needed while a
   // marker is moving. Their normal update resumes when dragging ends.
-  if (document.querySelector('.strike-marker.dragging')) {
+  if (document.querySelector('.strike-marker.dragging, .scenario-adjusting')) {
     lightFrame = 0;
     return;
   }
@@ -241,7 +241,7 @@ function paintBevel(material, context, rect, scale, lights, counts) {
 }
 
 function queueContentLighting() {
-  if (!lightFrame && !document.hidden && !document.querySelector('.strike-marker.dragging')) lightFrame = requestAnimationFrame(renderContentLighting);
+  if (!lightFrame && !document.hidden && !document.querySelector('.strike-marker.dragging, .scenario-adjusting')) lightFrame = requestAnimationFrame(renderContentLighting);
 }
 
 function attachGlass(element, options = {}) {

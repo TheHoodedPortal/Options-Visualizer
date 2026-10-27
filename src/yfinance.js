@@ -71,7 +71,4 @@ export class YFinanceClient {
     return data.chain;
   }
 
-  async history() {
-    return [];
-  }
 }

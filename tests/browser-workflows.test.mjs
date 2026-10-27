@@ -26,12 +26,12 @@ test('browser workflows keep dates, currency, saved trades, and the latest marke
   install('Date', FakeDate);
   const pending = [];
   install('fetch', url => new Promise(resolve => pending.push({ url: new URL(url), resolve })));
-  const respond = (symbol, expiration, {currency = 'USD', types = ['call', 'put'], iv = .3, strikes = [92.5, 97.5, 102.5], bid = 1, ask = 2} = {}) => {
+  const respond = (symbol, expiration, {currency = 'USD', types = ['call', 'put'], iv = .3, strikes = [92.5, 97.5, 102.5], bid = 1, ask = 2, last = null} = {}) => {
     const index = pending.findIndex(item => item.url.searchParams.get('symbol') === symbol && (item.url.searchParams.get('expiration') || '') === expiration);
     assert.notEqual(index, -1, `missing request ${symbol} ${expiration}`);
     const [{ resolve }] = pending.splice(index, 1);
     const selectedExpiration = expiration || '2026-11-13';
-    resolve({ ok: true, json: async () => ({ quote: { symbol, last: 100, currency }, expirations: ['2026-11-13', '2026-11-20', '2026-12-18'], selectedExpiration, chain: types.flatMap(type => strikes.map(strike => ({ type, strike, bid, ask, iv, volume: 1 }))) }) });
+    resolve({ ok: true, json: async () => ({ quote: { symbol, last: 100, currency }, expirations: ['2026-11-13', '2026-11-20', '2026-12-18'], selectedExpiration, chain: types.flatMap(type => strikes.map(strike => ({ type, strike, bid, ask, last, iv, volume: 1 }))) }) });
   };
   const flush = async () => { for (let i = 0; i < 6; i++) await new Promise(resolve => setImmediate(resolve)); };
   const el = id => w.document.getElementById(id);
@@ -197,6 +197,30 @@ test('browser workflows keep dates, currency, saved trades, and the latest marke
     assert.match(el('strategy-legs-summary').textContent, /Model estimate; no usable bid/);
     assert.notEqual(el('net-value').textContent, '$0');
     el('strategy-select').value = 'long-call'; el('strategy-select').dispatchEvent(new w.Event('change'));
+
+    // Enter submits unhighlighted ticker text, and delta mapping uses today even when the scenario is at expiration.
+    const oldStrike = Number(el('strategy-legs-summary').querySelector('button').textContent.match(/\$([\d,.]+)/)[1].replaceAll(',', ''));
+    const { optionDelta, daysUntil, RATE, PRICING_MODELS } = await import('../src/pricing.js');
+    const { closestStrikeAtDelta } = await import('../src/contract-mapping.js');
+    const dte = daysUntil('2026-11-13');
+    const targetDelta = optionDelta('call', 100, oldStrike, dte, .3 * 1.5, RATE, PRICING_MODELS.AMERICAN, 0);
+    const newStrikes = [85, 90, 95, 100, 105, 110, 115, 120, 125, 130];
+    const expectedStrike = closestStrikeAtDelta({ chain: newStrikes.map(strike => ({ type: 'call', strike, iv: .3 })), type: 'call', targetDelta, spot: 100, days: dte, iv: .3, ivScale: 1.5, model: PRICING_MODELS.AMERICAN, dividendYield: 0 });
+    el('symbol-input').value = 'MS'; el('symbol-input').dispatchEvent(new w.Event('input', { bubbles: true }));
+    el('symbol-input').dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    respond('MS', '2026-11-13', {strikes: newStrikes, bid: 0, ask: 0, last: 1.25}); await flush();
+    assert.match(el('strategy-legs-summary').textContent, new RegExp('\\$' + expectedStrike));
+    assert.match(el('strategy-legs-summary').textContent, /Last trade estimate; no usable ask/);
+
+    // Reclassify an expired spread if the new chain cannot preserve distinct strikes.
+    el('strategy-select').value = 'bull-call-spread'; el('strategy-select').dispatchEvent(new w.Event('change'));
+    assert.equal(el('strategy-select').value, 'bull-call-spread');
+    selectExpiry('November 20, 2026');
+    respond('MS', '2026-11-20', {strikes: [100], ask: 0, bid: 0}); await flush();
+    assert.equal(el('strategy-select').value, 'custom');
+    assert.match(el('strategy-legs-summary').textContent, /Model estimate; no usable ask/);
+    el('strategy-select').value = 'long-call'; el('strategy-select').dispatchEvent(new w.Event('change'));
+    selectExpiry('November 13, 2026'); await flush();
 
     // Sparse chains must not be mislabeled as spreads or condors.
     el('symbol-input').value = 'SPARSE'; el('symbol-input').dispatchEvent(new w.Event('change'));

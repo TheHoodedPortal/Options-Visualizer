@@ -312,13 +312,13 @@ export function expirationStats(state) {
   return { maxLoss: Math.max(0, maxLoss), maxProfit: Math.max(0, maxProfit), breakevens };
 }
 
-export function outputValue(state, stockPrice, daysForward, output, ivMultiplier = 1) {
-  const pnl = profitLoss(state, stockPrice, daysForward, ivMultiplier);
+export function outputValue(state, stockPrice, daysForward, output, ivMultiplier = 1, cachedRisk) {
   if (output === 'value') return contractValue(state, stockPrice, daysForward, ivMultiplier);
+  const pnl = profitLoss(state, stockPrice, daysForward, ivMultiplier);
   const capital = Math.abs(netDebit(state));
   if (output === 'percent') return capital > 1e-9 ? pnl / capital * 100 : NaN;
   if (output === 'risk') {
-    const risk = expirationStats(state).maxLoss;
+    const risk = cachedRisk ?? expirationStats(state).maxLoss;
     return Number.isFinite(risk) && risk > 0 ? pnl / risk * 100 : NaN;
   }
   return pnl;

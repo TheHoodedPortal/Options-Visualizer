@@ -87,6 +87,7 @@ function safeState(raw) {
     id: index + 1, type: leg.type === 'put' ? 'put' : 'call', side: leg.side === -1 ? -1 : 1,
     strike: boundedNumber(leg?.strike, 100, .01, 1000000), qty: Math.round(boundedNumber(leg?.qty, 1, 1, 100)),
     premium: boundedNumber(leg?.premium, 0, 0, 1000000), manual: !!leg.manual, excluded: !!leg.excluded,
+    premiumSource: ['ask', 'bid', 'last', 'model'].includes(leg.premiumSource) ? leg.premiumSource : null,
     premiumExpiry: leg.manual && /^\d{4}-\d{2}-\d{2}$/.test(leg.premiumExpiry || '') ? leg.premiumExpiry : (leg.manual ? raw.expiry : null),
     premiumSymbol: leg.manual && /^[A-Z0-9.^=-]{1,12}$/.test(leg.premiumSymbol || '') ? leg.premiumSymbol : (leg.manual ? String(raw.symbol || 'MU').toUpperCase() : null)
   }));
@@ -138,25 +139,49 @@ function showToast(message) {
 function availableStrike(type, desired) {
   return snapStrike(market.connected ? market.chain : [], state.spot, desired, type, market.connected);
 }
-function samplePremium(type, strike, side = 1) {
+function premiumEstimate(type, strike, side = 1) {
   if (market.connected) {
     const quote = market.chain.find(option => option.type === type && Math.abs(option.strike - strike) < .001);
     if (quote) {
       const bid = Number(quote.bid), ask = Number(quote.ask);
-      if (side === 1 && ask > 0 && bid >= 0 && bid <= ask) return ask;
-      if (side === -1 && bid > 0 && (ask <= 0 || bid <= ask)) return bid;
-      if (side === 1 && Number(quote.last) > 0) return Number(quote.last);
+      if (side === 1 && ask > 0 && bid >= 0 && bid <= ask) return { value: ask, source: 'ask' };
+      if (side === -1 && bid > 0 && (ask <= 0 || bid <= ask)) return { value: bid, source: 'bid' };
+      if (side === 1 && Number(quote.last) > 0) return { value: Number(quote.last), source: 'last' };
     }
   }
-  return Math.max(.01, Math.round(optionPrice(type, state.spot, strike, daysUntil(state.expiry), state.iv, RATE, state.model, state.dividendYield) * 100) / 100);
+  return { value: Math.max(.01, Math.round(optionPrice(type, state.spot, strike, daysUntil(state.expiry), state.iv, RATE, state.model, state.dividendYield) * 100) / 100), source: 'model' };
+}
+function samplePremium(type, strike, side = 1) { return premiumEstimate(type, strike, side).value; }
+function setSuggestedPremium(leg) {
+  const estimate = premiumEstimate(leg.type, leg.strike, leg.side);
+  leg.premium = estimate.value;
+  leg.premiumSource = estimate.source;
 }
 function classifyStrategy() {
   state.strategy = recognizeStrategy(state.legs);
   $('strategy-select').value = state.strategy;
 }
+function classifyRemappedStrategy(previousStrategy) {
+  if (previousStrategy !== 'custom' && recognizeStrategy(state.legs) !== previousStrategy) {
+    const strikes = alignPresetStrikes(previousStrategy, state.legs, market.chain);
+    if (strikes) {
+      const candidate = state.legs.map((leg, index) => ({ ...leg, strike: strikes[index] }));
+      if (recognizeStrategy(candidate) === previousStrategy) {
+        for (let i = 0; i < state.legs.length; i++) {
+          const leg = state.legs[i];
+          leg.strike = strikes[i];
+          if (!leg.manual) setSuggestedPremium(leg);
+        }
+      }
+    }
+  }
+  classifyStrategy();
+}
 function makeLeg(type, side, strike, qty = 1) {
   strike = availableStrike(type, strike);
-  return { id: nextId++, type, side, strike, qty, premium: samplePremium(type, strike, side), manual: false, excluded: false };
+  const leg = { id: nextId++, type, side, strike, qty, manual: false, excluded: false };
+  setSuggestedPremium(leg);
+  return leg;
 }
 function preset(key) {
   const needsCall = !['long-put', 'bear-put-spread'].includes(key);
@@ -181,7 +206,7 @@ function preset(key) {
   if (key === 'iron-condor') candidate = [makeLeg('put', 1, farLower), makeLeg('put', -1, lower), makeLeg('call', -1, upper), makeLeg('call', 1, farUpper)];
   if (candidate && market.connected && recognizeStrategy(candidate) !== key) {
     const strikes = alignPresetStrikes(key, candidate, market.chain);
-    if (strikes) candidate.forEach((leg, i) => { leg.strike = strikes[i]; leg.premium = samplePremium(leg.type, leg.strike, leg.side); });
+    if (strikes) candidate.forEach((leg, i) => { leg.strike = strikes[i]; setSuggestedPremium(leg); });
   }
   if (!candidate || recognizeStrategy(candidate) !== key) {
     $('strategy-select').value = state.strategy;
@@ -241,7 +266,7 @@ function renderExpiration() {
         if (market.connected) { loadMarketExpiry(value); return; }
         state.expiry = value;
         state.day = daysUntil(value);
-        for (const leg of state.legs) if (!leg.manual) leg.premium = samplePremium(leg.type, leg.strike, leg.side);
+        for (const leg of state.legs) if (!leg.manual) setSuggestedPremium(leg);
         render();
       };
       daysBox.append(button);
@@ -476,13 +501,13 @@ function openContractEditor(legId) {
       button.onclick = () => {
         const current = state.legs.find(item => item.id === contractEditorLegId);
         if (!current) return;
-        if (property === 'side') { current.side = Number(value); if (!current.manual) current.premium = samplePremium(current.type, current.strike, current.side); }
+        if (property === 'side') { current.side = Number(value); if (!current.manual) setSuggestedPremium(current); }
         else if (current.type !== value) {
           const strike = availableStrike(value, current.strike);
           if (strike == null) { showToast('No listed ' + value + ' contracts are available for this expiration.'); return; }
           current.type = value;
           current.strike = strike;
-          current.premium = samplePremium(value, current.strike, current.side);
+          setSuggestedPremium(current);
           current.manual = false;
         }
         classifyStrategy(); render();
@@ -711,7 +736,7 @@ function renderRuler() {
         if (desired == null) { showToast('No listed ' + item.type + ' contracts are available for this expiration.'); continue; }
         item.strike = desired;
         item.manual = false;
-        item.premium = samplePremium(item.type, desired, item.side);
+        setSuggestedPremium(item);
       }
       classifyStrategy(); render();
       requestAnimationFrame(() => $('strike-markers').querySelector('[data-leg-id="' + current.id + '"]')?.focus());
@@ -758,7 +783,7 @@ document.addEventListener('pointermove', event => {
     if (desired == null || leg.strike === desired) continue;
     leg.strike = desired;
     leg.manual = false;
-    leg.premium = samplePremium(leg.type, desired, leg.side);
+    setSuggestedPremium(leg);
     changed = true;
     const marker = [...$('strike-markers').children].find(item => Number(item.dataset.legId) === leg.id);
     if (marker) {
@@ -887,8 +912,9 @@ function renderStats() {
     const quoteText = value => hasBidAsk && Number.isFinite(contractQuote[value]) ? money(contractQuote[value], 2) : '—';
     const bid = quoteText('bid'), ask = quoteText('ask');
     const carried = leg.manual && ((leg.premiumExpiry && leg.premiumExpiry !== state.expiry) || (leg.premiumSymbol && leg.premiumSymbol !== state.symbol));
-    const noUsableBid = market.connected && !leg.manual && leg.side === -1 && (!contractQuote || !(Number(contractQuote.bid) > 0) || (Number(contractQuote.ask) > 0 && Number(contractQuote.bid) > Number(contractQuote.ask)));
-    const premiumNote = carried ? ' · Custom premium carried from ' + (leg.premiumSymbol || state.symbol) + ' ' + (leg.premiumExpiry || '') : leg.manual ? ' · Custom' : noUsableBid ? ' · Model estimate; no usable bid' : '';
+    const fallback = leg.premiumSource === 'last' ? 'Last trade estimate; no usable ask'
+      : leg.premiumSource === 'model' && market.connected ? 'Model estimate; no usable ' + (leg.side === 1 ? 'ask' : 'bid') : '';
+    const premiumNote = carried ? ' · Custom premium carried from ' + (leg.premiumSymbol || state.symbol) + ' ' + (leg.premiumExpiry || '') : leg.manual ? ' · Custom' : fallback ? ' · ' + fallback : '';
     row.setAttribute('aria-label', 'Edit ' + title + '. Bid ' + bid + ', ask ' + ask + (leg.excluded ? ', excluded from analysis' : premiumNote));
     const details = node('span', 'ticket-leg-details');
     details.append(node('span', 'ticket-leg-title', title), node('small', '', leg.excluded ? 'Excluded from analysis' : money(leg.premium, 2) + ' / share' + premiumNote));
@@ -928,9 +954,10 @@ function linePath(points, toX, toY) {
 }
 function chartSeries(model, minPrice, maxPrice, day, output = state.output, ivScale = state.ivScale, count = 161) {
   const points = [];
+  const risk = output === 'risk' ? expirationStats(model).maxLoss : undefined;
   for (let i = 0; i < count; i++) {
     const price = minPrice + (maxPrice - minPrice) * i / (count - 1);
-    points.push({ x: price, y: outputValue(model, price, day, output, ivScale) });
+    points.push({ x: price, y: outputValue(model, price, day, output, ivScale, risk) });
   }
   return points;
 }
@@ -1215,7 +1242,7 @@ function actions(...buttons) {
   return bar;
 }
 function captureContractDeltas() {
-  const days = Math.max(0, daysUntil(state.expiry) - state.day);
+  const days = daysUntil(state.expiry);
   return state.legs.map(leg => {
     const contract = market.chain.find(option => option.type === leg.type && Math.abs(option.strike - leg.strike) < .001);
     const volatility = contractImpliedVolatility(contract?.iv, state.iv) * state.ivScale;
@@ -1292,8 +1319,9 @@ async function loadMarketSymbol(client, symbol, deltaTargets = null, preservePos
     } else if (candidates.length && !candidates.some(option => Math.abs(option.strike - leg.strike) < .001)) {
       leg.strike = candidates.reduce((best, option) => Math.abs(option.strike - leg.strike) < Math.abs(best.strike - leg.strike) ? option : best, candidates[0]).strike;
     }
-    if (!leg.manual) leg.premium = samplePremium(leg.type, leg.strike, leg.side);
+    if (!leg.manual) setSuggestedPremium(leg);
   }
+  if (!preservePositions) classifyRemappedStrategy(state.strategy);
   render();
   return true;
 }
@@ -1406,8 +1434,9 @@ async function loadMarketExpiry(value) {
     if (near) state.iv = contractImpliedVolatility(near.iv, state.iv);
     for (const leg of state.legs) {
       leg.strike = availableStrike(leg.type, leg.strike);
-      if (!leg.manual) leg.premium = samplePremium(leg.type, leg.strike, leg.side);
+      if (!leg.manual) setSuggestedPremium(leg);
     }
+    classifyRemappedStrategy(state.strategy);
     render();
   } catch (error) { if (version === marketRequestVersion && error.name !== 'AbortError') { market.loading = false; renderDataStatus(); showToast(error.message); } }
   finally { if (version === marketRequestVersion) updatePendingExpiry(null); }
@@ -1462,7 +1491,7 @@ function openCustomExpiry() {
     if (market.connected) { closeModal(); loadMarketExpiry(value); return; }
     state.expiry = value;
     state.day = daysUntil(value);
-    for (const leg of state.legs) if (!leg.manual) leg.premium = samplePremium(leg.type, leg.strike, leg.side);
+    for (const leg of state.legs) if (!leg.manual) setSuggestedPremium(leg);
     closeModal(); render();
   }]));
 }
@@ -1528,8 +1557,9 @@ function openPositions(focusLegId = null) {
     reset.type = 'button';
     reset.onclick = () => {
       if (!(Number(strike.control.value) > 0)) { strike.control.reportValidity(); return; }
-      premium.control.value = samplePremium(type.control.value, Number(strike.control.value), Number(side.control.value)).toFixed(2);
-      entry.modelPremium = { type: type.control.value, strike: Number(strike.control.value), premium: Number(premium.control.value) };
+      const estimate = premiumEstimate(type.control.value, Number(strike.control.value), Number(side.control.value));
+      premium.control.value = estimate.value.toFixed(2);
+      entry.modelPremium = { type: type.control.value, side: Number(side.control.value), strike: Number(strike.control.value), premium: Number(premium.control.value), source: estimate.source };
     };
     const remove = node('button', 'position-remove', 'Remove position'); remove.type = 'button';
     remove.disabled = state.legs.length === 1;
@@ -1556,10 +1586,10 @@ function openPositions(focusLegId = null) {
       const k = Number(strike.control.value), q = Number(qty.control.value), p = Number(premium.control.value);
       if (market.connected && (type.control.value !== leg.type || k !== leg.strike) && !market.chain.some(option => option.type === type.control.value && Math.abs(option.strike - k) < .001)) { showToast('Choose a listed strike for this option type.'); return; }
       const model = entry.modelPremium;
-      const usesModel = model && model.type === type.control.value && model.strike === k && model.premium === p;
+      const usesModel = model && model.type === type.control.value && model.side === Number(side.control.value) && model.strike === k && model.premium === p;
       const priceChanged = type.control.value !== leg.type || k !== leg.strike || p !== leg.premium;
       updates.set(leg.id, { ...leg, type: type.control.value, side: Number(side.control.value), strike: k, qty: q, premium: p,
-        manual: usesModel ? false : priceChanged ? true : leg.manual,
+        manual: usesModel ? false : priceChanged ? true : leg.manual, premiumSource: usesModel ? model.source : priceChanged ? null : leg.premiumSource,
         premiumExpiry: usesModel ? null : priceChanged ? state.expiry : leg.premiumExpiry,
         premiumSymbol: usesModel ? null : priceChanged ? state.symbol : leg.premiumSymbol, excluded: !entry.included.checked });
     }
@@ -1589,43 +1619,9 @@ function openSave() {
     catch { showToast('This browser could not save the strategy.'); }
   }]));
 }
-async function showContractHistory() {
-  const leg = state.legs[0];
-  const option = market.chain.find(item => item.type === leg.type && Math.abs(item.strike - leg.strike) < .001);
-  if (!option?.symbol) { $('modal-content').prepend(node('p', '', 'No matching contract history is available for this leg.')); return; }
-  const host = node('div', 'history-host');
-  const status = node('p', '', 'Loading historical contract prices…');
-  host.append(status);
-  $('modal-content').prepend(host);
-  try {
-    const history = await market.client.history(option.symbol);
-    clear(host);
-    if (history.length < 2) { host.append(node('p', '', 'Yahoo Finance option history is not available through this connector.')); return; }
-    host.append(node('p', '', option.symbol + ' · daily close per share'));
-    const width = 500, height = 180, left = 45, right = 12, top = 12, bottom = 28;
-    const values = history.map(day => day.close);
-    const min = Math.min(...values), max = Math.max(...values);
-    const span = Math.max(.01, max - min);
-    const x = index => left + index / (history.length - 1) * (width - left - right);
-    const y = value => top + (max - value + span * .08) / (span * 1.16) * (height - top - bottom);
-    const chart = svgNode('svg', { viewBox: '0 0 500 180', class: 'historical-mini-chart', role: 'img', 'aria-label': 'Historical option contract close prices' });
-    chart.append(svgNode('line', { x1: left, y1: height - bottom, x2: width - right, y2: height - bottom, stroke: 'var(--color-border)' }));
-    chart.append(svgNode('polyline', { points: history.map((day, index) => x(index) + ',' + y(day.close)).join(' '), fill: 'none', stroke: 'var(--color-blue)', 'stroke-width': 2.5 }));
-    for (const [index, label] of [[0, history[0].date], [history.length - 1, history[history.length - 1].date]]) {
-      const text = svgNode('text', { x: x(index), y: height - 7, fill: 'var(--color-muted)', 'font-size': 11, 'text-anchor': index === 0 ? 'start' : 'end' });
-      text.textContent = label; chart.append(text);
-    }
-    const high = svgNode('text', { x: left - 4, y: top + 12, fill: 'var(--color-muted)', 'font-size': 11, 'text-anchor': 'end' });
-    high.textContent = money(max, 2);
-    const low = svgNode('text', { x: left - 4, y: height - bottom, fill: 'var(--color-muted)', 'font-size': 11, 'text-anchor': 'end' });
-    low.textContent = money(min, 2);
-    chart.append(high, low); host.append(chart);
-  } catch (error) { clear(host); host.append(node('p', '', error.message)); }
-}
 function openHistory() {
   modal('Saved strategies');
   $('modal-content').append(node('p', '', 'Strategies saved in this browser are listed below.'));
-  if (market.connected && state.legs.length === 1) showContractHistory();
   const trades = getSaved();
   if (!trades.length) $('modal-content').append(node('p', '', 'No strategies saved yet.'));
   for (const trade of trades) {
@@ -1685,7 +1681,7 @@ $('symbol-input').addEventListener('keydown', event => {
   }
   if (event.key === 'Enter') {
     event.preventDefault();
-    if (!list.hidden && options.length) chooseTicker(options[tickerActiveIndex >= 0 ? tickerActiveIndex : 0].dataset.symbol);
+    if (!list.hidden && tickerActiveIndex >= 0 && options[tickerActiveIndex]) chooseTicker(options[tickerActiveIndex].dataset.symbol);
     else commitTicker(event.currentTarget.value);
     event.currentTarget.blur();
   } else if (event.key === 'Escape' && !list.hidden) {

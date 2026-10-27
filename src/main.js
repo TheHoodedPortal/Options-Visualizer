@@ -34,22 +34,27 @@ const defaultExpiry = today <= new Date('2026-11-13T00:00:00') ? '2026-11-13' : 
 let market = { client: null, connected: false, quote: null, expirations: [], chain: [], loading: true, error: '' };
 let marketRequestVersion = 0;
 let marketAbort = null;
-function cancelMarketRequest() { marketAbort?.abort(); marketAbort = null; }
+let pendingExpiry = null;
+function updatePendingExpiry(value) {
+  pendingExpiry = value;
+  for (const button of $('expiration-strip').querySelectorAll('.exp-day')) {
+    const loading = button.dataset.expiry === value;
+    button.classList.toggle('loading', loading);
+    button.setAttribute('aria-busy', String(loading));
+  }
+}
+function cancelMarketRequest() { marketAbort?.abort(); marketAbort = null; updatePendingExpiry(null); }
 let restoredFromLink = false;
 let state = {
   symbol: 'MU', spot: 1047.60, iv: 0.465, expiry: defaultExpiry, strategy: 'long-call',
   legs: [{ id: 1, type: 'call', side: 1, strike: 1050, qty: 1, premium: 62, manual: false, excluded: false }],
-  day: 0, range: 15, ivScale: 1, output: 'pl', model: PRICING_MODELS.AMERICAN, dividendYield: 0, dividendYieldMode: 'auto'
+  day: daysUntil(defaultExpiry), range: 15, ivScale: 1, output: 'pl', model: PRICING_MODELS.AMERICAN, dividendYield: 0, dividendYieldMode: 'auto'
 };
 let toastTimer;
 let modalReturnFocus = null;
 let drag = null;
 let dragHoldTimer = 0;
 let contractEditorLegId = null;
-let chartTargetModel = null;
-let displayedChartModel = null;
-let chartAnimationFrame = 0;
-let chartAnimationLastFrame = 0;
 let dragFrame = 0;
 let tickerActiveIndex = -1;
 let requestedSymbol = '';
@@ -94,7 +99,7 @@ function safeState(raw) {
     symbol: /^[A-Z0-9.^=-]{1,12}$/.test(String(raw.symbol || '').toUpperCase()) ? String(raw.symbol).toUpperCase() : 'MU', spot: boundedNumber(raw.spot, 100, .01, 1000000),
     iv: boundedNumber(raw.iv, .35, .01, 100), expiry,
     strategy: names[raw.strategy] ? raw.strategy : 'custom', legs,
-    day: boundedNumber(raw.day, 0, 0, daysUntil(expiry)),
+    day: boundedNumber(raw.day, daysUntil(expiry), 0, daysUntil(expiry)),
     range: boundedNumber(raw.range, 15, 5, 50), ivScale: boundedNumber(raw.ivScale, 1, .4, 2),
     output: ['pl', 'percent', 'value', 'risk'].includes(raw.output) ? raw.output : 'pl',
     model: [PRICING_MODELS.AMERICAN, PRICING_MODELS.EUROPEAN].includes(raw.model) ? raw.model : PRICING_MODELS.AMERICAN,
@@ -185,7 +190,7 @@ function preset(key) {
   }
   state.strategy = key;
   state.legs = candidate;
-  state.day = 0;
+  state.day = daysUntil(state.expiry);
   render();
 }
 function expirationDates() {
@@ -203,44 +208,65 @@ function expirationDates() {
   }
   return [...dates].filter(date => date >= iso(startDate)).sort();
 }
+let expirationListSignature = null;
+let lastRenderedExpiry = null;
 function renderExpiration() {
   const strip = $('expiration-strip');
-  clear(strip);
-  let currentMonth = '';
-  let daysBox;
-  for (const value of expirationDates()) {
-    const date = new Date(value + 'T00:00:00');
-    const month = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
-    if (month !== currentMonth) {
-      currentMonth = month;
-      const group = node('div', 'exp-month');
-      const label = node('div', 'exp-month-label', date.toLocaleDateString('en-US', { month: 'short' }) + (date.getFullYear() !== startDate.getFullYear() ? " '" + String(date.getFullYear()).slice(-2) : ''));
-      daysBox = node('div', 'exp-days');
-      group.append(label, daysBox);
-      strip.append(group);
+  const dates = expirationDates();
+  const signature = startDate.getFullYear() + ':' + dates.join(',');
+  const rebuild = signature !== expirationListSignature;
+  const selectionChanged = state.expiry !== lastRenderedExpiry;
+  if (rebuild) {
+    const scrollLeft = strip.scrollLeft;
+    clear(strip);
+    let currentMonth = '';
+    let daysBox;
+    for (const value of dates) {
+      const date = new Date(value + 'T00:00:00');
+      const month = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+      if (month !== currentMonth) {
+        currentMonth = month;
+        const group = node('div', 'exp-month');
+        const label = node('div', 'exp-month-label', date.toLocaleDateString('en-US', { month: 'short' }) + (date.getFullYear() !== startDate.getFullYear() ? " '" + String(date.getFullYear()).slice(-2) : ''));
+        daysBox = node('div', 'exp-days');
+        group.append(label, daysBox);
+        strip.append(group);
+      }
+      const button = node('button', 'exp-day', String(date.getDate()));
+      button.type = 'button';
+      button.dataset.expiry = value;
+      button.title = date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+      button.setAttribute('aria-label', button.title + ' expiration');
+      button.onclick = () => {
+        if (market.connected) { loadMarketExpiry(value); return; }
+        state.expiry = value;
+        state.day = daysUntil(value);
+        for (const leg of state.legs) if (!leg.manual) leg.premium = samplePremium(leg.type, leg.strike, leg.side);
+        render();
+      };
+      daysBox.append(button);
     }
-    const button = node('button', 'exp-day' + (value === state.expiry ? ' selected' : ''), String(date.getDate()));
-    button.type = 'button';
-    button.title = new Date(value + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-    button.setAttribute('aria-label', button.title + ' expiration');
-    button.setAttribute('aria-pressed', String(value === state.expiry));
-    button.onclick = () => {
-      if (market.connected) { loadMarketExpiry(value); return; }
-      state.expiry = value;
-      state.day = 0;
-      for (const leg of state.legs) if (!leg.manual) leg.premium = samplePremium(leg.type, leg.strike, leg.side);
-      render();
-    };
-    daysBox.append(button);
+    const customDate = node('button', 'exp-custom', '+ Custom date');
+    customDate.type = 'button'; customDate.onclick = openCustomExpiry; strip.append(customDate);
+    strip.scrollLeft = scrollLeft;
+    expirationListSignature = signature;
   }
-  const customDate = node('button', 'exp-custom', '+ Custom date');
-  customDate.type = 'button'; customDate.onclick = openCustomExpiry; strip.append(customDate);
+  for (const button of strip.querySelectorAll('.exp-day')) {
+    const selected = button.dataset.expiry === state.expiry;
+    button.classList.toggle('selected', selected);
+    button.setAttribute('aria-pressed', String(selected));
+  }
+  updatePendingExpiry(pendingExpiry);
+  lastRenderedExpiry = state.expiry;
   $('expiration-dte').textContent = new Date(state.expiry + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + ' · ' + daysUntil(state.expiry) + 'd';
-  requestAnimationFrame(() => {
+  if (rebuild || selectionChanged) requestAnimationFrame(() => {
     const selected = strip.querySelector('.exp-day.selected');
     if (!selected) return;
-    const delta = selected.getBoundingClientRect().left - strip.getBoundingClientRect().left - (strip.clientWidth - selected.clientWidth) / 2;
-    strip.scrollLeft += delta;
+    const item = selected.getBoundingClientRect(), bounds = strip.getBoundingClientRect();
+    if (item.left < bounds.left || item.right > bounds.right) {
+      const delta = item.left - bounds.left - (strip.clientWidth - selected.clientWidth) / 2;
+      strip.scrollLeft += delta;
+    }
     updateExpirationNav();
   });
 }
@@ -798,7 +824,7 @@ function renderGreeks() {
   $('greek-gamma').textContent = signedGreek(greeks.gamma, 3);
   $('greek-theta').textContent = signedGreekMoney(greeks.theta);
   $('greek-vega').textContent = signedGreekMoney(greeks.vega);
-  $('greeks-asof').textContent = state.day === 0 ? 'Now' : state.day === dte ? 'At expiration' : displayDate(iso(dateAfter(state.day)));
+  $('greeks-asof').textContent = state.day === dte ? 'At expiration' : state.day === 0 ? 'Now' : displayDate(iso(dateAfter(state.day)));
   const yieldContext = state.dividendYieldMode === 'manual' ? 'manual' : market.quote?.dividendYieldSource ? 'TTM estimate' : 'estimate unavailable';
   $('greeks-note').textContent = (state.model === PRICING_MODELS.AMERICAN ? 'Bjerksund–Stensland 2002' : 'Black–Scholes') + ' · 4% risk-free rate · ' + (state.dividendYield * 100).toFixed(2) + '% annual dividend (' + yieldContext + ') · flat scenario IV for all positions';
 }
@@ -919,78 +945,31 @@ function makeChartModel(chart) {
   const maxPrice = xAxis.ticks.at(-1) ?? bounds.max;
   const dte = daysUntil(state.expiry);
   const selected = chartSeries(state, minPrice, maxPrice, state.day);
-  const expiry = chartSeries(state, minPrice, maxPrice, dte);
+  const expiry = state.day === dte ? selected : chartSeries(state, minPrice, maxPrice, dte);
   const all = [...selected, ...expiry].map(point => point.y).filter(Number.isFinite);
   let minY = Math.min(0, ...all), maxY = Math.max(0, ...all);
   const padding = chartPadding(minY, maxY);
   minY -= padding; maxY += padding;
   const yAxis = niceTicks(minY, maxY, 6);
-  if (yAxis.ticks.length > 1) {
-    minY = yAxis.ticks[0];
-    maxY = yAxis.ticks.at(-1);
-  }
   if (axisMeasure) {
     axisMeasure.font = '11px ' + getComputedStyle(chart).fontFamily;
     left = Math.max(left, Math.ceil(Math.max(...yAxis.ticks.map(value => axisMeasure.measureText(axisText(value, yAxis.step)).width)) + 12));
   }
   return { width, height, left, right, top, bottom, minPrice, maxPrice, minY, maxY, xAxis, yAxis, selected, expiry, dte };
 }
-function interpolateChartModel(from, to, amount) {
-  if (!from || from.width !== to.width || from.selected.length !== to.selected.length || from.expiry.length !== to.expiry.length) return to;
-  const lerp = (a, b) => a + (b - a) * amount;
-  const blendSeries = (a, b) => a.map((point, index) => ({ x: lerp(point.x, b[index].x), y: lerp(point.y, b[index].y) }));
-  return {
-    ...to,
-    minPrice: lerp(from.minPrice, to.minPrice), maxPrice: lerp(from.maxPrice, to.maxPrice),
-    minY: lerp(from.minY, to.minY), maxY: lerp(from.maxY, to.maxY),
-    selected: blendSeries(from.selected, to.selected), expiry: blendSeries(from.expiry, to.expiry)
-  };
-}
-function chartModelSettled(from, to) {
-  if (!from || from.width !== to.width) return true;
-  const near = (a, b, tolerance) => Math.abs(a - b) <= tolerance;
-  if (!near(from.minPrice, to.minPrice, .02) || !near(from.maxPrice, to.maxPrice, .02) || !near(from.minY, to.minY, .25) || !near(from.maxY, to.maxY, .25)) return false;
-  for (let i = 0; i < to.selected.length; i++) {
-    if (!near(from.selected[i].y, to.selected[i].y, .25) || !near(from.expiry[i].y, to.expiry[i].y, .25)) return false;
-  }
-  return true;
-}
 function renderChart() {
   const chart = $('payoff-chart');
   const width = Math.max(1, Math.round(chart.getBoundingClientRect().width));
   chart.setAttribute('viewBox', '0 0 ' + width + ' 340');
   if ((state.output === 'risk' && (!Number.isFinite(expirationStats(state).maxLoss) || expirationStats(state).maxLoss <= 0)) || (state.output === 'percent' && Math.abs(netDebit(state)) < 1e-9)) {
-    if (chartAnimationFrame) cancelAnimationFrame(chartAnimationFrame);
-    chartAnimationFrame = 0; chartAnimationLastFrame = 0;
-    chartTargetModel = displayedChartModel = null;
     clear(chart);
     const label = svgNode('text', { x: width / 2, y: 170, fill: 'var(--color-muted)', 'font-size': 14, 'text-anchor': 'middle' });
     label.textContent = state.output === 'percent' ? 'Return is unavailable for zero net premium' : 'Return on max risk is unavailable for this strategy';
     chart.append(label);
     return;
   }
-  chartTargetModel = makeChartModel(chart);
-  if (!displayedChartModel || displayedChartModel.width !== chartTargetModel.width) {
-    if (chartAnimationFrame) cancelAnimationFrame(chartAnimationFrame);
-    chartAnimationFrame = 0; chartAnimationLastFrame = 0;
-    displayedChartModel = chartTargetModel;
-    drawChartFrame(displayedChartModel);
-    return;
-  }
-  if (!chartAnimationFrame) chartAnimationFrame = requestAnimationFrame(animateChartFrame);
-}
-function animateChartFrame(timestamp) {
-  const elapsed = chartAnimationLastFrame ? timestamp - chartAnimationLastFrame : 16;
-  chartAnimationLastFrame = timestamp;
-  // A damped follow keeps up with strike dragging while easing out when movement stops.
-  const amount = 1 - Math.exp(-Math.max(1, elapsed) / 68);
-  displayedChartModel = interpolateChartModel(displayedChartModel, chartTargetModel, amount);
-  if (chartModelSettled(displayedChartModel, chartTargetModel)) {
-    displayedChartModel = chartTargetModel;
-    chartAnimationFrame = 0; chartAnimationLastFrame = 0;
-  }
-  drawChartFrame(displayedChartModel);
-  if (chartAnimationFrame) chartAnimationFrame = requestAnimationFrame(animateChartFrame);
+  // Refit the axis and redraw the payoff together so the line never leads the scale.
+  drawChartFrame(makeChartModel(chart));
 }
 function drawChartFrame(model) {
   const chart = $('payoff-chart');
@@ -1012,6 +991,7 @@ function drawChartFrame(model) {
   defs.append(green, red, topClip, bottomClip);
   chart.append(defs);
   for (const value of yAxis.ticks) {
+    if (value < minY || value > maxY) continue;
     if (Math.abs(value) < (maxY - minY) * .05) continue;
     const y = toY(value);
     chart.append(svgNode('line', { x1: left, y1: y, x2: width - right, y2: y, stroke: 'var(--color-grid)', 'stroke-width': .7 }));
@@ -1072,7 +1052,7 @@ function drawChartFrame(model) {
       node('span', 'tooltip-caption', 'Stock at ' + money(price, 2)),
       node('small', 'tooltip-move ' + moveClass, moveLabel),
       node('strong', value >= 0 ? 'tooltip-gain' : 'tooltip-loss', formattedOutput(value)),
-      node('small', '', measure + ' · ' + (state.day === 0 ? 'today' : state.day === dte ? 'expiration' : displayDate(iso(dateAfter(state.day)))))
+      node('small', '', measure + ' · ' + (state.day === dte ? 'expiration' : state.day === 0 ? 'today' : displayDate(iso(dateAfter(state.day)))))
     );
     tip.hidden = false;
     tip.style.left = Math.min(rect.width - tip.offsetWidth - 6, Math.max(5, event.clientX - rect.left + 13)) + 'px';
@@ -1110,12 +1090,12 @@ function renderVisualization() {
   $('date-slider').value = state.day;
   $('range-slider').value = state.range;
   $('iv-slider').value = Math.round(state.ivScale * 100);
-  $('date-label').textContent = state.day === 0 ? 'Now' : state.day === dte ? 'Expiration' : displayDate(iso(dateAfter(state.day)));
+  $('date-label').textContent = state.day === dte ? 'Expiration' : state.day === 0 ? 'Now' : displayDate(iso(dateAfter(state.day)));
   $('remaining-label').textContent = (dte - state.day) + 'd to expiration';
-  $('reset-scenario').disabled = state.day === 0 && state.range === 15 && state.ivScale === 1;
+  $('reset-scenario').disabled = state.day === dte && state.range === 15 && state.ivScale === 1;
   $('range-label').textContent = '±' + state.range + '%';
   $('iv-label').textContent = (state.iv * state.ivScale * 100).toFixed(1) + '%';
-  $('legend-now').textContent = state.day === 0 ? 'Today' : state.day === dte ? 'Expiration' : displayDate(iso(dateAfter(state.day)));
+  $('legend-now').textContent = state.day === dte ? 'Expiration' : state.day === 0 ? 'Today' : displayDate(iso(dateAfter(state.day)));
   $('legend-exp').textContent = 'Expiration';
   $('legend-exp-item').hidden = state.day === dte;
   for (const id of ['date-slider', 'range-slider', 'iv-slider']) {
@@ -1288,7 +1268,7 @@ async function loadMarketSymbol(client, symbol, deltaTargets = null, preservePos
   if (!preservePositions) state.spot = Number(quote.last);
   if (!preservePositions && state.dividendYieldMode === 'auto') state.dividendYield = clamp(Number(quote.dividendYield) || 0, 0, 10);
   state.expiry = expiry;
-  if (!preservePositions) state.day = 0;
+  if (!preservePositions) state.day = daysUntil(expiry);
   else state.day = clamp(state.day, 0, daysUntil(expiry));
   const near = chain.filter(option => option.type === 'call' && Number.isFinite(option.iv) && option.iv > .0000101).sort((a, b) => Math.abs(a.strike - state.spot) - Math.abs(b.strike - state.spot))[0];
   if (near && !preservePositions) state.iv = contractImpliedVolatility(near.iv, state.iv);
@@ -1412,6 +1392,7 @@ async function loadMarketExpiry(value) {
   const controller = marketAbort = new AbortController();
   const version = ++marketRequestVersion;
   const symbol = state.symbol, client = market.client;
+  updatePendingExpiry(value);
   try {
     const chain = await client.chain(symbol, value, { signal: controller.signal });
     if (version !== marketRequestVersion || state.symbol !== symbol || market.client !== client) return;
@@ -1420,7 +1401,7 @@ async function loadMarketExpiry(value) {
     market.chain = chain;
     market.loading = false;
     state.expiry = value;
-    state.day = 0;
+    state.day = daysUntil(value);
     const near = chain.filter(option => option.type === 'call' && Number.isFinite(option.iv) && option.iv > .0000101).sort((a, b) => Math.abs(a.strike - state.spot) - Math.abs(b.strike - state.spot))[0];
     if (near) state.iv = contractImpliedVolatility(near.iv, state.iv);
     for (const leg of state.legs) {
@@ -1428,7 +1409,8 @@ async function loadMarketExpiry(value) {
       if (!leg.manual) leg.premium = samplePremium(leg.type, leg.strike, leg.side);
     }
     render();
-  } catch (error) { if (version === marketRequestVersion) { market.loading = false; renderDataStatus(); showToast(error.message); } }
+  } catch (error) { if (version === marketRequestVersion && error.name !== 'AbortError') { market.loading = false; renderDataStatus(); showToast(error.message); } }
+  finally { if (version === marketRequestVersion) updatePendingExpiry(null); }
 }
 function openDataSettings() {
   modal('Market Data');
@@ -1479,7 +1461,7 @@ function openCustomExpiry() {
     if (market.connected && !market.expirations.includes(value)) { showToast('Choose an expiration listed by the connected data source.'); return; }
     if (market.connected) { closeModal(); loadMarketExpiry(value); return; }
     state.expiry = value;
-    state.day = 0;
+    state.day = daysUntil(value);
     for (const leg of state.legs) if (!leg.manual) leg.premium = samplePremium(leg.type, leg.strike, leg.side);
     closeModal(); render();
   }]));
@@ -1724,7 +1706,7 @@ $('spot-input').addEventListener('focus', event => { event.target.value = state.
 $('spot-input').addEventListener('change', event => { const input = event.target.value.trim(); const valid = /^(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?$/.test(input); const value = valid ? Number(input.replaceAll(',', '')) : NaN; if (Number.isFinite(value) && value > 0 && value <= 1000000) state.spot = value; else { event.target.value = state.spot.toFixed(2); showToast('Enter a valid price using a decimal point.'); } render(); });
 $('spot-input').addEventListener('blur', event => { event.target.value = state.spot.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); });
 $('assumptions-help').onclick = openAssumptions;
-$('reset-scenario').onclick = () => { state.day = 0; state.range = 15; state.ivScale = 1; render(); };
+$('reset-scenario').onclick = () => { state.day = daysUntil(state.expiry); state.range = 15; state.ivScale = 1; render(); };
 $('model-select').addEventListener('change', event => {
   state.model = [PRICING_MODELS.AMERICAN, PRICING_MODELS.EUROPEAN].includes(event.target.value) ? event.target.value : PRICING_MODELS.AMERICAN;
   render();

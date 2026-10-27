@@ -131,6 +131,12 @@ function collectContentLights() {
 }
 
 function renderContentLighting(time) {
+  // The decorative bevels are expensive to repaint and are not needed while a
+  // marker is moving. Their normal update resumes when dragging ends.
+  if (document.querySelector('.strike-marker.dragging')) {
+    lightFrame = 0;
+    return;
+  }
   if (time - lastLightTime < 32) {
     lightFrame = requestAnimationFrame(renderContentLighting);
     return;
@@ -235,7 +241,7 @@ function paintBevel(material, context, rect, scale, lights, counts) {
 }
 
 function queueContentLighting() {
-  if (!lightFrame && !document.hidden) lightFrame = requestAnimationFrame(renderContentLighting);
+  if (!lightFrame && !document.hidden && !document.querySelector('.strike-marker.dragging')) lightFrame = requestAnimationFrame(renderContentLighting);
 }
 
 function attachGlass(element, options = {}) {
@@ -457,6 +463,9 @@ new ResizeObserver(queueContentLighting).observe(chartTooltip);
 // Native SVG text can crowd at the smallest viewport widths. Preserve the
 // whole-dollar ticks, but omit interior labels that physically overlap.
 const payoffSvg = document.getElementById('payoff-chart');
+// Keep the decorative curve in the same paint as the chart, independent of
+// the slower ambient-light updates used by the surrounding glass surfaces.
+new MutationObserver(renderGraphGlow).observe(payoffSvg, { childList: true, attributes: true, attributeFilter: ['viewBox'] });
 let labelFrame = 0;
 function spacePriceLabels() {
   labelFrame = 0;

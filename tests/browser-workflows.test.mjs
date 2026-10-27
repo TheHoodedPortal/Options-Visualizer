@@ -38,6 +38,8 @@ test('browser workflows keep dates, currency, saved trades, and the latest marke
   const click = id => el(id).click();
   try {
     await import('../src/main.js');
+    assert.equal(el('date-slider').value, el('date-slider').max);
+    assert.equal(el('date-label').textContent, 'Expiration');
     respond('MU', '2026-11-13', {currency: 'CAD', iv: 3.5}); await flush();
     assert.equal(el('iv-label').textContent, '350.0%');
     assert.equal(el('iv-slider').min, '40');
@@ -81,8 +83,16 @@ test('browser workflows keep dates, currency, saved trades, and the latest marke
     el('iv-slider').value = '150'; el('iv-slider').dispatchEvent(new w.Event('input'));
     el('strategy-select').value = 'short-straddle'; el('strategy-select').dispatchEvent(new w.Event('change'));
     assert.equal(el('net-value').textContent, '$200'); // Two sales at the $1 bid.
+    const payoffPath = () => el('payoff-chart').querySelector('path[stroke]:not([stroke-dasharray])').getAttribute('d');
+    const priorPayoff = payoffPath();
+
     el('strategy-select').value = 'long-call'; el('strategy-select').dispatchEvent(new w.Event('change'));
     assert.equal(el('net-value').textContent, '$200'); // One purchase at the $2 ask.
+    // The new payoff and its fitted axis appear together, without waiting for animation frames.
+    assert.notEqual(payoffPath(), priorPayoff);
+    const payoffY = [...payoffPath().matchAll(/[ML][^,]+,([^ML]+)/g)].map(match => Number(match[1]));
+    assert.ok(payoffY.length && payoffY.every(y => y >= 24 && y <= 310));
+    el('date-slider').value = '3'; el('date-slider').dispatchEvent(new w.Event('input'));
     click('save-button');
     [...el('modal-content').querySelectorAll('button')].find(button => button.textContent === 'Save Locally').click();
     assert.equal(JSON.parse(w.localStorage.getItem('openstrat-trades')).length, 1);
@@ -110,12 +120,35 @@ test('browser workflows keep dates, currency, saved trades, and the latest marke
     assert.match(el('net-value').textContent, /^€/);
 
     const selectExpiry = date => [...el('expiration-strip').querySelectorAll('button')].find(button => button.getAttribute('aria-label')?.includes(date)).click();
+    const novButton = el('expiration-strip').querySelector('[data-expiry="2026-11-20"]');
+    const decButton = el('expiration-strip').querySelector('[data-expiry="2026-12-18"]');
     selectExpiry('November 20, 2026');
+    assert.equal(novButton.getAttribute('aria-busy'), 'true');
     selectExpiry('December 18, 2026');
+    assert.equal(novButton.getAttribute('aria-busy'), 'false');
+    assert.equal(decButton.getAttribute('aria-busy'), 'true');
     respond('MSFT', '2026-12-18', {iv: 5}); await flush();
+    assert.equal(decButton.getAttribute('aria-busy'), 'false');
+    assert.equal(el('expiration-strip').querySelector('[data-expiry="2026-11-20"]'), novButton);
+    assert.equal(el('expiration-strip').querySelector('[data-expiry="2026-12-18"]'), decButton);
     respond('MSFT', '2026-11-20'); await flush();
     assert.match(el('expiration-dte').textContent, /Dec 18/);
+    // An unrelated full render between a press and click must not replace the button or move the strip.
+    el('expiration-strip').scrollLeft = 100;
+    novButton.dispatchEvent(new w.MouseEvent('mousedown', { bubbles: true }));
+    el('dividend-yield').dispatchEvent(new w.Event('change'));
+    assert.equal(el('expiration-strip').querySelector('[data-expiry="2026-11-20"]'), novButton);
+    assert.equal(el('expiration-strip').scrollLeft, 100);
+    novButton.click(); await flush();
+    assert.match(el('expiration-dte').textContent, /Nov 20/);
+    decButton.click(); await flush();
+    assert.match(el('expiration-dte').textContent, /Dec 18/);
     assert.equal(el('iv-label').textContent, '750.0%');
+    assert.equal(el('date-slider').value, el('date-slider').max);
+    el('date-slider').value = '1'; el('date-slider').dispatchEvent(new w.Event('input'));
+    click('reset-scenario');
+    assert.equal(el('date-slider').value, el('date-slider').max);
+    assert.equal(el('date-label').textContent, 'Expiration');
 
     click('history-button');
     [...el('modal-content').querySelectorAll('button')].find(button => button.textContent === 'Load').click();
@@ -127,6 +160,7 @@ test('browser workflows keep dates, currency, saved trades, and the latest marke
     assert.equal(el('iv-label').textContent, '525.0%');
     assert.equal(el('spot-input').value, '125.00');
     assert.equal(el('iv-slider').value, '150');
+    assert.equal(el('date-slider').value, '3');
 
     // A manually entered premium remains visible and is marked with its original contract date.
     el('strategy-legs-summary').querySelector('button').click();

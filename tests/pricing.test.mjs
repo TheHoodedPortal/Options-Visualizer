@@ -147,3 +147,14 @@ test('calendar days and expiration DTE cross spring and fall daylight saving cha
     }
   } finally { if (oldTZ === undefined) delete process.env.TZ; else process.env.TZ = oldTZ; }
 });
+
+test('zero volatility discounts deterministic payoff and allows optimal American exercise', () => {
+  const european = PRICING_MODELS.EUROPEAN, american = PRICING_MODELS.AMERICAN;
+  assert.ok(Math.abs(optionPrice('call', 110, 100, 365, 0, .04, european, 0) - (110 - 100 * Math.exp(-.04))) < 1e-10);
+  assert.ok(Math.abs(optionPrice('put', 80, 100, 365, 0, .04, european, 0) - (100 * Math.exp(-.04) - 80)) < 1e-10);
+  assert.equal(optionPrice('put', 80, 100, 365, 0, .04, american, 0), 20);
+  const candidate = Math.log(.04 * 100 / (.02 * 190)) / (.04 - .02);
+  const expected = 190 * Math.exp(-.02 * candidate) - 100 * Math.exp(-.04 * candidate);
+  assert.ok(candidate > 0 && candidate < 10);
+  assert.ok(Math.abs(optionPrice('call', 190, 100, 3650, 0, .04, american, .02) - expected) < 1e-10);
+});

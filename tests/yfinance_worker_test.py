@@ -123,6 +123,19 @@ class YFinanceWorkerTests(unittest.TestCase):
         self.assertEqual(len(yf.tickers), 1)
         self.assertEqual(yf.tickers[0][1].requested_expirations, ["nearest", "2026-12-18"])
 
+    def test_explicit_expiration_uses_cached_yfinance_date_mapping(self):
+        class CachedTicker(FakeTicker):
+            _expirations = {"2026-11-20": 1, "2026-12-18": 2}
+        class CachedFinance(FakeYFinance):
+            def Ticker(self, symbol):
+                ticker = CachedTicker()
+                self.tickers.append((symbol, ticker))
+                return ticker
+        yf = CachedFinance()
+        result = market_snapshot(yf, {}, "MU", "2026-12-18", today=datetime.date(2026, 10, 10))
+        self.assertEqual(result["selectedExpiration"], "2026-12-18")
+        self.assertEqual(yf.tickers[0][1].requested_expirations, ["2026-12-18"])
+
     def test_requests_current_expiration_when_undated_chain_is_stale(self):
         class StaleTicker(FakeTicker):
             options = ("2026-10-01", "2026-11-20", "2026-12-18")

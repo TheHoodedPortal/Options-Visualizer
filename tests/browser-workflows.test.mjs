@@ -15,6 +15,7 @@ test('browser workflows keep dates, currency, saved trades, and the latest marke
   const install = (name, value) => { original[name] = Object.getOwnPropertyDescriptor(globalThis, name); Object.defineProperty(globalThis, name, { value, writable: true, configurable: true }); };
   for (const name of ['window', 'document', 'localStorage', 'location', 'navigator', 'getComputedStyle']) install(name, name === 'getComputedStyle' ? w.getComputedStyle.bind(w) : w[name]);
   install('innerWidth', 1200);
+  install('innerHeight', 900);
   install('requestAnimationFrame', () => 1);
   install('cancelAnimationFrame', () => {});
   const intervals = [];
@@ -25,12 +26,12 @@ test('browser workflows keep dates, currency, saved trades, and the latest marke
   install('Date', FakeDate);
   const pending = [];
   install('fetch', url => new Promise(resolve => pending.push({ url: new URL(url), resolve })));
-  const respond = (symbol, expiration, {currency = 'USD', types = ['call', 'put'], iv = .3, strikes = [92.5, 97.5, 102.5]} = {}) => {
+  const respond = (symbol, expiration, {currency = 'USD', types = ['call', 'put'], iv = .3, strikes = [92.5, 97.5, 102.5], bid = 1, ask = 2} = {}) => {
     const index = pending.findIndex(item => item.url.searchParams.get('symbol') === symbol && (item.url.searchParams.get('expiration') || '') === expiration);
     assert.notEqual(index, -1, `missing request ${symbol} ${expiration}`);
     const [{ resolve }] = pending.splice(index, 1);
     const selectedExpiration = expiration || '2026-11-13';
-    resolve({ ok: true, json: async () => ({ quote: { symbol, last: 100, currency }, expirations: ['2026-11-13', '2026-11-20', '2026-12-18'], selectedExpiration, chain: types.flatMap(type => strikes.map(strike => ({ type, strike, bid: 1, ask: 2, iv, volume: 1 }))) }) });
+    resolve({ ok: true, json: async () => ({ quote: { symbol, last: 100, currency }, expirations: ['2026-11-13', '2026-11-20', '2026-12-18'], selectedExpiration, chain: types.flatMap(type => strikes.map(strike => ({ type, strike, bid, ask, iv, volume: 1 }))) }) });
   };
   const flush = async () => { for (let i = 0; i < 6; i++) await new Promise(resolve => setImmediate(resolve)); };
   const el = id => w.document.getElementById(id);
@@ -47,6 +48,13 @@ test('browser workflows keep dates, currency, saved trades, and the latest marke
     respond('MU', '2026-11-13', {currency: 'CAD', iv: 3.5}); await flush();
     assert.match(w.document.querySelector('.data-note').textContent, /flat scenario volatility/);
     assert.match(el('greeks-note').textContent, /flat scenario IV/);
+    const callBar = [...el('volume-bars').querySelectorAll('.volume-bar.call')].find(bar => bar.title.includes('$102.50'));
+    const putBar = [...el('volume-bars').querySelectorAll('.volume-bar.put')].find(bar => bar.title.includes('$102.50'));
+    const marker = el('strike-markers').querySelector('.strike-marker');
+    assert.ok(callBar && putBar && marker);
+    assert.equal(callBar.style.left, putBar.style.left);
+    assert.equal(callBar.style.left, marker.style.left);
+    assert.equal(callBar.style.width, putBar.style.width);
     assert.equal(el('spot-currency').textContent, '$');
     assert.match(el('data-status-detail').textContent, /Currency: CAD/);
     assert.match(el('net-value').textContent, /^\$/);
@@ -66,6 +74,9 @@ test('browser workflows keep dates, currency, saved trades, and the latest marke
     assert.match(el('toast').textContent, /decimal point/);
     el('dividend-yield').value = '40'; el('dividend-yield').dispatchEvent(new w.Event('change'));
     assert.equal(el('dividend-yield').value, '40.00');
+    el('dividend-yield').value = '1001'; el('dividend-yield').dispatchEvent(new w.Event('change'));
+    assert.equal(el('dividend-yield').value, '40.00');
+    assert.match(el('toast').textContent, /dividend yield/);
     el('spot-input').value = '125'; el('spot-input').dispatchEvent(new w.Event('change'));
     el('iv-slider').value = '150'; el('iv-slider').dispatchEvent(new w.Event('input'));
     el('strategy-select').value = 'short-straddle'; el('strategy-select').dispatchEvent(new w.Event('change'));
@@ -116,6 +127,25 @@ test('browser workflows keep dates, currency, saved trades, and the latest marke
     assert.equal(el('iv-label').textContent, '525.0%');
     assert.equal(el('spot-input').value, '125.00');
     assert.equal(el('iv-slider').value, '150');
+
+    // A manually entered premium remains visible and is marked with its original contract date.
+    el('strategy-legs-summary').querySelector('button').click();
+    const editorPrice = w.document.querySelector('[data-editor-price]');
+    editorPrice.value = '7.25'; editorPrice.dispatchEvent(new w.Event('change'));
+    w.document.querySelector('.contract-editor-close').click();
+    selectExpiry('November 20, 2026');
+    respond('MU', '2026-11-20', { currency: 'CAD' }); await flush();
+    assert.match(el('strategy-legs-summary').textContent, /\$7\.25.*carried from MU 2026-11-13/);
+    selectExpiry('November 13, 2026'); await flush();
+    assert.doesNotMatch(el('strategy-legs-summary').textContent, /carried from/);
+
+    // A zero bid is not an executable sell premium, even if a last trade exists.
+    el('symbol-input').value = 'ZERO'; el('symbol-input').dispatchEvent(new w.Event('change'));
+    respond('ZERO', '2026-11-13', { bid: 0, ask: 2 }); await flush();
+    el('strategy-select').value = 'short-straddle'; el('strategy-select').dispatchEvent(new w.Event('change'));
+    assert.match(el('strategy-legs-summary').textContent, /Model estimate; no usable bid/);
+    assert.notEqual(el('net-value').textContent, '$0');
+    el('strategy-select').value = 'long-call'; el('strategy-select').dispatchEvent(new w.Event('change'));
 
     // Sparse chains must not be mislabeled as spreads or condors.
     el('symbol-input').value = 'SPARSE'; el('symbol-input').dispatchEvent(new w.Event('change'));

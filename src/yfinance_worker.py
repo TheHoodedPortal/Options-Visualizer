@@ -62,7 +62,17 @@ def market_snapshot(yf, ticker_cache, symbol, expiration=None, today=None, force
     # quote, and nearest chain. Keep that response briefly so changing expiry
     # does not refetch the same nearest chain.
     nearest_cache = getattr(ticker, "_openstrat_nearest_option_set", None)
-    if not force_refresh and nearest_cache and time.monotonic() - nearest_cache[0] < 5 * 60:
+    cached_expirations = getattr(ticker, "_expirations", None) or {}
+    cache_is_fresh = nearest_cache and time.monotonic() - nearest_cache[0] < 5 * 60
+    direct_expiration = (
+        not force_refresh and expiration and expiration in cached_expirations
+        and (not cache_is_fresh or expiration != min(cached_expirations))
+    )
+    if direct_expiration:
+        # yfinance already knows the date-to-timestamp mapping; fetch only this chain.
+        selected_option_set = ticker.option_chain(expiration)
+        nearest_option_set = None
+    elif not force_refresh and cache_is_fresh:
         nearest_option_set = nearest_cache[1]
     else:
         nearest_option_set = ticker.option_chain()
@@ -82,7 +92,7 @@ def market_snapshot(yf, ticker_cache, symbol, expiration=None, today=None, force
     selected = expiration if expiration in expirations else nearest
     # The undated response corresponds to the first listed expiration, which
     # can differ from the first current expiration if stale dates are present.
-    option_set = nearest_option_set if selected == expirations[0] else ticker.option_chain(selected)
+    option_set = selected_option_set if direct_expiration and selected == expiration else nearest_option_set if selected == expirations[0] else ticker.option_chain(selected)
     chain = option_rows(option_set.calls, "call") + option_rows(option_set.puts, "put")
     if not chain:
         raise ValueError("Yahoo Finance returned no standard option contracts for " + symbol + " " + selected + ".")

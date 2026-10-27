@@ -961,7 +961,7 @@ input[type=range] { height: 24px; margin: 4px 0 0; background-size: 100% 4px; ba
 .strike-title-tools #strike-help { white-space: nowrap; }
 .volume-bars { position: absolute; z-index: 1; top: 0; right: 14px; bottom: 0; left: 48px; overflow: hidden; pointer-events: none; }
 .volume-baseline { position: absolute; right: 0; left: 0; height: 1px; background: color-mix(in srgb, var(--color-muted) 42%, transparent); }
-.volume-bar { position: absolute; display: block; min-width: 1px; border-radius: 2px 2px 0 0; opacity: .82; }
+.volume-bar { position: absolute; display: block; transform: translateX(-50%); min-width: 1px; border-radius: 2px 2px 0 0; opacity: .82; }
 .volume-bar.call { background: var(--color-green); }
 .volume-bar.put { background: var(--color-red); }
 .ruler-ticks { z-index: 2; }

@@ -81,7 +81,9 @@ function safeState(raw) {
   const legs = raw.legs.slice(0, 16).filter(leg => leg && typeof leg === 'object').map((leg, index) => ({
     id: index + 1, type: leg.type === 'put' ? 'put' : 'call', side: leg.side === -1 ? -1 : 1,
     strike: boundedNumber(leg?.strike, 100, .01, 1000000), qty: Math.round(boundedNumber(leg?.qty, 1, 1, 100)),
-    premium: boundedNumber(leg?.premium, 0, 0, 1000000), manual: !!leg.manual, excluded: !!leg.excluded
+    premium: boundedNumber(leg?.premium, 0, 0, 1000000), manual: !!leg.manual, excluded: !!leg.excluded,
+    premiumExpiry: leg.manual && /^\d{4}-\d{2}-\d{2}$/.test(leg.premiumExpiry || '') ? leg.premiumExpiry : (leg.manual ? raw.expiry : null),
+    premiumSymbol: leg.manual && /^[A-Z0-9.^=-]{1,12}$/.test(leg.premiumSymbol || '') ? leg.premiumSymbol : (leg.manual ? String(raw.symbol || 'MU').toUpperCase() : null)
   }));
   if (!legs.length) return null;
   const expiryDate = new Date(String(raw.expiry) + 'T00:00:00');
@@ -136,8 +138,9 @@ function samplePremium(type, strike, side = 1) {
     const quote = market.chain.find(option => option.type === type && Math.abs(option.strike - strike) < .001);
     if (quote) {
       const bid = Number(quote.bid), ask = Number(quote.ask);
-      if (bid >= 0 && ask > 0 && bid <= ask) return side === 1 ? ask : bid;
-      if (Number(quote.last) > 0) return Number(quote.last);
+      if (side === 1 && ask > 0 && bid >= 0 && bid <= ask) return ask;
+      if (side === -1 && bid > 0 && (ask <= 0 || bid <= ask)) return bid;
+      if (side === 1 && Number(quote.last) > 0) return Number(quote.last);
     }
   }
   return Math.max(.01, Math.round(optionPrice(type, state.spot, strike, daysUntil(state.expiry), state.iv, RATE, state.model, state.dividendYield) * 100) / 100);
@@ -503,6 +506,7 @@ function openContractEditor(legId) {
     if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1000000) { price.value = current.premium.toFixed(2); return; }
     current.premium = parsed;
     current.manual = true;
+    current.premiumExpiry = state.expiry; current.premiumSymbol = state.symbol;
     render();
   };
   priceWrap.append(price); priceField.append(priceWrap);
@@ -640,7 +644,6 @@ function renderRuler() {
     const maxVolume = Math.max(...visibleContracts.map(option => option.volume));
     const strikeCount = new Set(visibleContracts.map(option => option.strike)).size;
     const barWidth = clamp(plotWidth / Math.max(1, strikeCount) * .36, 2, 4.5);
-    const pairGap = Math.min(2, barWidth * .6);
     const axisY = tickTop - volumeBand / 2;
     const baseline = node('div', 'volume-baseline');
     baseline.style.top = axisY + 'px';
@@ -649,9 +652,7 @@ function renderRuler() {
       const bar = node('span', 'volume-bar ' + option.type);
       const x = (option.strike - bounds.min) / span * 100;
       const height = Math.max(1, Math.round(Math.log1p(option.volume) / Math.log1p(maxVolume) * (volumeBand / 2 - 1)));
-      bar.style.left = option.type === 'call'
-        ? `calc(${x}% - ${pairGap / 2 + barWidth}px)`
-        : `calc(${x}% + ${pairGap / 2}px)`;
+      bar.style.left = x + '%';
       bar.style.width = barWidth + 'px';
       bar.style.height = height + 'px';
       bar.style.top = (option.type === 'call' ? axisY - height : axisY + 1) + 'px';
@@ -859,9 +860,12 @@ function renderStats() {
     const hasBidAsk = contractQuote && (Number(contractQuote.bid) > 0 || Number(contractQuote.ask) > 0);
     const quoteText = value => hasBidAsk && Number.isFinite(contractQuote[value]) ? money(contractQuote[value], 2) : '—';
     const bid = quoteText('bid'), ask = quoteText('ask');
-    row.setAttribute('aria-label', 'Edit ' + title + '. Bid ' + bid + ', ask ' + ask + (leg.excluded ? ', excluded from analysis' : ''));
+    const carried = leg.manual && ((leg.premiumExpiry && leg.premiumExpiry !== state.expiry) || (leg.premiumSymbol && leg.premiumSymbol !== state.symbol));
+    const noUsableBid = market.connected && !leg.manual && leg.side === -1 && (!contractQuote || !(Number(contractQuote.bid) > 0) || (Number(contractQuote.ask) > 0 && Number(contractQuote.bid) > Number(contractQuote.ask)));
+    const premiumNote = carried ? ' · Custom premium carried from ' + (leg.premiumSymbol || state.symbol) + ' ' + (leg.premiumExpiry || '') : leg.manual ? ' · Custom' : noUsableBid ? ' · Model estimate; no usable bid' : '';
+    row.setAttribute('aria-label', 'Edit ' + title + '. Bid ' + bid + ', ask ' + ask + (leg.excluded ? ', excluded from analysis' : premiumNote));
     const details = node('span', 'ticket-leg-details');
-    details.append(node('span', 'ticket-leg-title', title), node('small', '', leg.excluded ? 'Excluded from analysis' : money(leg.premium, 2) + ' / share' + (leg.manual ? ' · Custom' : '')));
+    details.append(node('span', 'ticket-leg-title', title), node('small', '', leg.excluded ? 'Excluded from analysis' : money(leg.premium, 2) + ' / share' + premiumNote));
     const quote = node('span', 'ticket-leg-quotes');
     for (const [label, value] of [['Bid', bid], ['Ask', ask]]) {
       const item = node('span', 'ticket-quote');
@@ -1184,7 +1188,7 @@ function render() {
   } else {
     changeLabel.hidden = true;
   }
-  document.querySelector('.data-note').textContent = 'Payoffs and portfolio Greeks use the same flat scenario volatility for every position. Entry estimates use ask for buys and bid for sells; actual fills may differ. Standard contracts represent 100 shares.';
+  document.querySelector('.data-note').textContent = 'Payoffs and portfolio Greeks use the same flat scenario volatility for every position. Entry estimates use ask for buys and bid for sells. Without a usable bid, a model estimate is shown; actual fills may differ. Standard contracts represent 100 shares.';
   renderExpiration(); renderRuler(); renderStats(); renderControls(); renderVisualization(); syncContractEditor();
 }
 function modal(title) {
@@ -1483,7 +1487,7 @@ function openCustomExpiry() {
 function openAdd() {
   if (state.legs.length >= 16) { showToast('A strategy can contain up to 16 positions.'); return; }
   modal('Add Option');
-  $('modal-content').append(node('p', '', 'Add a call or put to the current strategy. The suggested premium is illustrative and can be edited.'));
+  $('modal-content').append(node('p', '', 'Add a call or put to the current strategy. Suggested premiums are estimates; when a sell has no usable bid, the suggestion is a model estimate, not a quoted fill.'));
   const grid = node('div', 'form-grid');
   const type = field('Option type', 'call', 'select', [['call', 'Call'], ['put', 'Put']]);
   const side = field('Side', '1', 'select', [['1', 'Buy (long)'], ['-1', 'Sell (short)']]);
@@ -1506,7 +1510,7 @@ function openAdd() {
     const k = Number(strike.control.value), q = Number(qty.control.value), p = Number(premium.control.value);
     if (market.connected && !market.chain.some(option => option.type === type.control.value && Math.abs(option.strike - k) < .001)) { showToast('Choose a listed strike for this option type.'); return; }
     if (!(k > 0 && q > 0 && p >= 0)) { showToast('Enter a valid strike, quantity, and premium.'); return; }
-    state.legs.push({ id: nextId++, type: type.control.value, side: Number(side.control.value), strike: k, qty: q, premium: p, manual: true, excluded: false });
+    state.legs.push({ id: nextId++, type: type.control.value, side: Number(side.control.value), strike: k, qty: q, premium: p, manual: true, excluded: false, premiumExpiry: state.expiry, premiumSymbol: state.symbol });
     classifyStrategy(); closeModal(); render(); showToast('Position added.');
   }]));
 }
@@ -1573,7 +1577,9 @@ function openPositions(focusLegId = null) {
       const usesModel = model && model.type === type.control.value && model.strike === k && model.premium === p;
       const priceChanged = type.control.value !== leg.type || k !== leg.strike || p !== leg.premium;
       updates.set(leg.id, { ...leg, type: type.control.value, side: Number(side.control.value), strike: k, qty: q, premium: p,
-        manual: usesModel ? false : priceChanged ? true : leg.manual, excluded: !entry.included.checked });
+        manual: usesModel ? false : priceChanged ? true : leg.manual,
+        premiumExpiry: usesModel ? null : priceChanged ? state.expiry : leg.premiumExpiry,
+        premiumSymbol: usesModel ? null : priceChanged ? state.symbol : leg.premiumSymbol, excluded: !entry.included.checked });
     }
     state.legs = state.legs.flatMap(leg => updates.has(leg.id) ? updates.get(leg.id) ? [updates.get(leg.id)] : [] : [leg]);
     classifyStrategy(); closeModal(); render(); showToast('Position changes saved.');
@@ -1724,7 +1730,14 @@ $('model-select').addEventListener('change', event => {
   render();
 });
 $('dividend-yield').addEventListener('change', event => {
-  state.dividendYield = clamp((Number(event.target.value) || 0) / 100, 0, 10);
+  const input = event.target;
+  const value = Number(input.value);
+  if (!input.value || !input.validity.valid || !Number.isFinite(value) || value < 0 || value > 1000) {
+    input.value = (state.dividendYield * 100).toFixed(2);
+    showToast('Enter a dividend yield between 0% and 1,000%.');
+    return;
+  }
+  state.dividendYield = value / 100;
   state.dividendYieldMode = 'manual';
   render();
 });

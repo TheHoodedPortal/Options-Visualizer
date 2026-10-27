@@ -17,6 +17,21 @@ export function intrinsic(type, spot, strike) {
   return type === 'call' ? Math.max(spot - strike, 0) : Math.max(strike - spot, 0);
 }
 
+// With zero volatility the underlying follows a deterministic risk-neutral path.
+function deterministicOption(type, spot, strike, years, rate, dividendYield, american) {
+  const sign = type === 'call' ? 1 : -1;
+  const valueAt = t => sign * (spot * Math.exp(-dividendYield * t) - strike * Math.exp(-rate * t));
+  const candidates = [0, years];
+  if (american && dividendYield * spot !== 0 && rate !== dividendYield) {
+    const ratio = rate * strike / (dividendYield * spot);
+    if (ratio > 0) {
+      const critical = Math.log(ratio) / (rate - dividendYield);
+      if (critical > 0 && critical < years) candidates.push(critical);
+    }
+  }
+  return Math.max(0, ...(american ? candidates : [years]).map(valueAt));
+}
+
 function generalizedBlackScholes(type, spot, strike, years, volatility, rate, costOfCarry) {
   if (years <= 0 || volatility <= 0) return intrinsic(type, spot, strike);
   if (spot <= 0) return type === 'put' ? strike * Math.exp(-rate * years) : 0;
@@ -154,7 +169,8 @@ function bjerksundStensland(type, spot, strike, years, rate, carry, volatility) 
 }
 
 export function optionPrice(type, spot, strike, days, volatility, rate = RATE, model = 'black-scholes', dividendYield = 0) {
-  if (days <= 0 || volatility <= 0) return intrinsic(type, spot, strike);
+  if (days <= 0) return intrinsic(type, spot, strike);
+  if (volatility <= 0) return deterministicOption(type, spot, strike, days / 365, rate, dividendYield, model === PRICING_MODELS.AMERICAN);
   if (spot <= 0 && model === PRICING_MODELS.AMERICAN) return intrinsic(type, spot, strike);
   const years = days / 365;
   const carry = rate - dividendYield;

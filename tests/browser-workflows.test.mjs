@@ -190,6 +190,35 @@ test('browser workflows keep dates, currency, saved trades, and the latest marke
     selectExpiry('November 13, 2026'); await flush();
     assert.doesNotMatch(el('strategy-legs-summary').textContent, /carried from/);
 
+    // Suggested prices follow side changes in Manage Positions, while edited prices stay manual.
+    el('symbol-input').value = 'BIDASK'; el('symbol-input').dispatchEvent(new w.Event('change'));
+    respond('BIDASK', '2026-11-13', { bid: 1, ask: 2 }); await flush();
+    el('strategy-select').value = 'bull-call-spread'; el('strategy-select').dispatchEvent(new w.Event('change'));
+    click('positions-button');
+    let card = el('modal-content').querySelector('.position-card');
+    let controls = card.querySelectorAll('select');
+    controls[1].value = '-1'; controls[1].dispatchEvent(new w.Event('change'));
+    assert.equal(card.querySelectorAll('input[type="number"]')[2].value, '1.00');
+    [...el('modal-content').querySelectorAll('button')].find(button => button.textContent === 'Save changes').click();
+    assert.match(el('strategy-legs-summary').textContent, /\$1\.00 \/ share/);
+    click('positions-button');
+    card = el('modal-content').querySelector('.position-card');
+    const customPremium = card.querySelectorAll('input[type="number"]')[2];
+    customPremium.value = '7.25'; customPremium.dispatchEvent(new w.Event('input'));
+    controls = card.querySelectorAll('select');
+    controls[1].value = '1'; controls[1].dispatchEvent(new w.Event('change'));
+    assert.equal(customPremium.value, '7.25');
+    [...el('modal-content').querySelectorAll('button')].find(button => button.textContent === 'Save changes').click();
+
+    // An untouched Add Option suggestion keeps its source and refreshes on expiration change.
+    click('add-leg');
+    [...el('modal-content').querySelectorAll('button')].find(button => button.textContent === 'Add Position').click();
+    selectExpiry('November 20, 2026');
+    respond('BIDASK', '2026-11-20', { bid: 3, ask: 4 }); await flush();
+    assert.match(el('strategy-legs-summary').lastElementChild.textContent, /\$4\.00 \/ share/);
+    el('strategy-select').value = 'long-call'; el('strategy-select').dispatchEvent(new w.Event('change'));
+    selectExpiry('November 13, 2026'); await flush();
+
     // A zero bid is not an executable sell premium, even if a last trade exists.
     el('symbol-input').value = 'ZERO'; el('symbol-input').dispatchEvent(new w.Event('change'));
     respond('ZERO', '2026-11-13', { bid: 0, ask: 2 }); await flush();

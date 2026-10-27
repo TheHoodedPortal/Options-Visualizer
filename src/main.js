@@ -820,16 +820,18 @@ document.addEventListener('pointercancel', event => {
 
 function chanceOfProfit() {
   const dte = daysUntil(state.expiry);
-  if (!activeLegs(state).length) return 0;
+  const legs = activeLegs(state);
+  if (!legs.length) return 0;
+  const expirationPayoff = price => legs.reduce((sum, leg) => sum + leg.side * leg.qty * (Math.max(leg.type === 'call' ? price - leg.strike : leg.strike - price, 0) - leg.premium), 0);
   const adjustedIv = state.iv * state.ivScale; const sigma = adjustedIv * Math.sqrt(dte / 365);
-  if (sigma <= 0) return profitLoss(state, state.spot, dte) > 0 ? 100 : 0;
+  if (sigma <= 0) return expirationPayoff(state.spot) > 0 ? 100 : 0;
   let total = 0, positive = 0;
   const step = .025;
   for (let z = -5; z <= 5; z += step) {
     const weight = Math.exp(-z * z / 2) * step;
     const price = state.spot * Math.exp((RATE - state.dividendYield - adjustedIv * adjustedIv / 2) * dte / 365 + sigma * z);
     total += weight;
-    if (profitLoss(state, price, dte) > 0) positive += weight;
+    if (expirationPayoff(price) > 0) positive += weight;
   }
   return positive / total * 100;
 }
@@ -1506,22 +1508,31 @@ function openAdd() {
   const strike = field('Strike price (' + currencyLabel() + ')', initialStrike ?? state.spot, 'number');
   const qty = field('Contracts', 1, 'number');
   const premium = field('Entry premium (' + currencyLabel() + ' / share)' , samplePremium('call', Number(strike.control.value)).toFixed(2), 'number');
+  let premiumEdited = false;
+  let suggested = premiumEstimate('call', Number(strike.control.value), 1);
+  const refreshSuggestion = () => {
+    if (premiumEdited) return;
+    suggested = premiumEstimate(type.control.value, Number(strike.control.value), Number(side.control.value));
+    premium.control.value = suggested.value.toFixed(2);
+  };
+  premium.control.addEventListener('input', () => { premiumEdited = true; });
   strike.control.min = '.01'; strike.control.max = '1000000'; premium.control.max = '1000000'; qty.control.min = '1'; qty.control.max = '100'; qty.control.step = '1';
   type.control.onchange = () => {
     const listed = availableStrike(type.control.value, Number(strike.control.value));
     if (listed == null) { showToast('No listed ' + type.control.value + ' contracts are available for this expiration.'); return; }
     strike.control.value = String(listed);
-    premium.control.value = samplePremium(type.control.value, listed, Number(side.control.value)).toFixed(2);
+    refreshSuggestion();
   };
-  side.control.onchange = () => { premium.control.value = samplePremium(type.control.value, Number(strike.control.value), Number(side.control.value)).toFixed(2); };
-  strike.control.onchange = () => { if (availableStrike(type.control.value, Number(strike.control.value)) != null) premium.control.value = samplePremium(type.control.value, Number(strike.control.value), Number(side.control.value)).toFixed(2); };
+  side.control.onchange = refreshSuggestion;
+  strike.control.onchange = () => { if (availableStrike(type.control.value, Number(strike.control.value)) != null) refreshSuggestion(); };
   for (const item of [type, side, strike, qty, premium]) grid.append(item.wrap);
   $('modal-content').append(grid, actions(['Cancel', 'secondary-button', closeModal], ['Add Position', 'primary-button', () => {
     for (const control of [strike.control, qty.control, premium.control]) { control.required = true; if (!control.reportValidity()) return; }
     const k = Number(strike.control.value), q = Number(qty.control.value), p = Number(premium.control.value);
     if (market.connected && !market.chain.some(option => option.type === type.control.value && Math.abs(option.strike - k) < .001)) { showToast('Choose a listed strike for this option type.'); return; }
     if (!(k > 0 && q > 0 && p >= 0)) { showToast('Enter a valid strike, quantity, and premium.'); return; }
-    state.legs.push({ id: nextId++, type: type.control.value, side: Number(side.control.value), strike: k, qty: q, premium: p, manual: true, excluded: false, premiumExpiry: state.expiry, premiumSymbol: state.symbol });
+    const manual = premiumEdited || p !== Number(suggested.value.toFixed(2));
+    state.legs.push({ id: nextId++, type: type.control.value, side: Number(side.control.value), strike: k, qty: q, premium: p, manual, premiumSource: manual ? null : suggested.source, excluded: false, premiumExpiry: manual ? state.expiry : null, premiumSymbol: manual ? state.symbol : null });
     classifyStrategy(); closeModal(); render(); showToast('Position added.');
   }]));
 }
@@ -1546,8 +1557,17 @@ function openPositions(focusLegId = null) {
     for (const item of [type, side, strike, qty, premium]) grid.append(item.wrap);
     card.append(grid);
     const controls = node('div', 'position-actions');
-    const entry = { leg, type, side, strike, qty, premium, removed: false, modelPremium: null };
+    const entry = { leg, type, side, strike, qty, premium, removed: false, modelPremium: null, premiumEdited: false };
     entries.push(entry);
+    let premiumEdited = leg.manual;
+    premium.control.addEventListener('input', () => { premiumEdited = true; entry.premiumEdited = true; entry.modelPremium = null; });
+    const refreshSuggestion = () => {
+      if (premiumEdited || !(Number(strike.control.value) > 0)) return;
+      const estimate = premiumEstimate(type.control.value, Number(strike.control.value), Number(side.control.value));
+      premium.control.value = estimate.value.toFixed(2);
+      entry.modelPremium = { type: type.control.value, side: Number(side.control.value), strike: Number(strike.control.value), premium: Number(premium.control.value), source: estimate.source };
+    };
+    for (const control of [type.control, side.control, strike.control]) control.addEventListener('change', refreshSuggestion);
     const toggle = node('label', 'position-include');
     const included = node('input'); included.type = 'checkbox'; included.checked = !leg.excluded;
     toggle.append(included, node('span', '', 'Include in analysis'));
@@ -1560,6 +1580,8 @@ function openPositions(focusLegId = null) {
       const estimate = premiumEstimate(type.control.value, Number(strike.control.value), Number(side.control.value));
       premium.control.value = estimate.value.toFixed(2);
       entry.modelPremium = { type: type.control.value, side: Number(side.control.value), strike: Number(strike.control.value), premium: Number(premium.control.value), source: estimate.source };
+      premiumEdited = false;
+      entry.premiumEdited = false;
     };
     const remove = node('button', 'position-remove', 'Remove position'); remove.type = 'button';
     remove.disabled = state.legs.length === 1;
@@ -1587,7 +1609,7 @@ function openPositions(focusLegId = null) {
       if (market.connected && (type.control.value !== leg.type || k !== leg.strike) && !market.chain.some(option => option.type === type.control.value && Math.abs(option.strike - k) < .001)) { showToast('Choose a listed strike for this option type.'); return; }
       const model = entry.modelPremium;
       const usesModel = model && model.type === type.control.value && model.side === Number(side.control.value) && model.strike === k && model.premium === p;
-      const priceChanged = type.control.value !== leg.type || k !== leg.strike || p !== leg.premium;
+      const priceChanged = entry.premiumEdited || type.control.value !== leg.type || k !== leg.strike || p !== leg.premium;
       updates.set(leg.id, { ...leg, type: type.control.value, side: Number(side.control.value), strike: k, qty: q, premium: p,
         manual: usesModel ? false : priceChanged ? true : leg.manual, premiumSource: usesModel ? model.source : priceChanged ? null : leg.premiumSource,
         premiumExpiry: usesModel ? null : priceChanged ? state.expiry : leg.premiumExpiry,

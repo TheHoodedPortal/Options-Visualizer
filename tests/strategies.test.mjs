@@ -32,3 +32,10 @@ test('finds ordered listed strikes when initial condor strikes collapse', () => 
   assert.ok(strikes[0] < strikes[1] && strikes[1] < strikes[2] && strikes[2] < strikes[3]);
   assert.equal(alignPresetStrikes('iron-condor', legs, [{type:'put',strike:100},{type:'call',strike:100}]), null);
 });
+
+test('aligns a reversed spread by position role, preserving excluded legs', () => {
+  const legs = [leg('call', -1, 110), leg('call', 1, 100), leg('put', 1, 80, 1, true)];
+  const strikes = alignPresetStrikes('bull-call-spread', legs, [100, 105].map(strike => ({ type: 'call', strike })));
+  assert.deepEqual(strikes, [105, 100, 80]);
+  assert.equal(recognizeStrategy(legs.map((item, i) => ({ ...item, strike: strikes[i] }))), 'bull-call-spread');
+});
